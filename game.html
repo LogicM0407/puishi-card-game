@@ -1471,6 +1471,7 @@ function renderLobby(app){
   
   // 诊断信息
   let diagInfo = '';
+  let tipsInfo = '';
   if (netMode === 'webrtc') {
     const statusColor = webrtcStatus === 'connected' ? '#4ade80' : 
                         webrtcStatus === 'error' ? '#ff6b6b' : 
@@ -1485,7 +1486,7 @@ function renderLobby(app){
           <span style="color:#a48cff;font-weight:600;">🔍 P2P 连接状态</span>
           <span style="color:${statusColor};font-weight:600;">${statusText}</span>
         </div>
-        ${webrtcError ? `<div style="color:#ff6b6b;font-size:11px;margin-top:6px;">⚠️ ${webrtcError}</div>` : ''}
+        ${webrtcError ? `<div style="color:#ff6b6b;font-size:11px;margin-top:6px;padding:8px;background:rgba(255,107,107,.1);border-radius:4px;">⚠️ ${webrtcError}</div>` : ''}
         <details style="margin-top:8px;font-size:11px;">
           <summary style="cursor:pointer;color:#a48cff;">查看诊断信息</summary>
           <div style="margin-top:6px;color:var(--muted);line-height:1.8;">
@@ -1497,6 +1498,21 @@ function renderLobby(app){
           </div>
         </details>
       </div>`;
+      
+    // 如果连接失败或有错误，显示帮助提示
+    if (webrtcStatus === 'error' || webrtcStatus === 'connecting') {
+      tipsInfo = `
+        <div style="background:rgba(251,191,36,.1);padding:12px;border-radius:8px;margin:10px 0;border:1px solid rgba(251,191,36,.3);font-size:12px;line-height:1.8;">
+          <div style="color:#fbbf24;font-weight:600;margin-bottom:6px;">💡 连接提示</div>
+          <div style="color:var(--muted);">
+            • 移动数据+VPN环境下连接可能失败，建议：<br>
+            &nbsp;&nbsp;① 手机关闭VPN后重试<br>
+            &nbsp;&nbsp;② 手机连接另一个WiFi<br>
+            &nbsp;&nbsp;③ 电脑开启手机热点，手机连热点（使用同WiFi模式）<br>
+            • 确保双方网络稳定，等待30秒以上
+          </div>
+        </div>`;
+    }
   }
   
   app.innerHTML = `
@@ -1509,6 +1525,7 @@ function renderLobby(app){
         <div class="label" style="margin-top:6px;">把房间码发给队友即可加入</div>
       </div>
       ${diagInfo}
+      ${tipsInfo}
       <div class="tabs" style="margin-bottom:10px;">
         <button data-mode="local">本地热座</button>
         <button data-mode="room" class="active">联机房间</button>
@@ -1975,18 +1992,18 @@ class WebRTCTransport {
     this.myPeerId = null;
   }
 
-  // 获取 ICE 服务器配置 - 使用可靠的 STUN 服务器
+  // 获取 ICE 服务器配置 - 使用尽可能多的 STUN 服务器
   _getIceServers() {
     return [
-      // Google STUN（最稳定可靠）
+      // Google STUN（最稳定，优先尝试）
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
-      // 国内可能可达的 STUN
+      // 国内 STUN 服务器
       { urls: 'stun:stun.miwifi.com:3478' },
       { urls: 'stun:stun.chat.bilibili.com:3478' },
-      // Mozilla STUN
+      // 其他公共 STUN
       { urls: 'stun:stun.services.mozilla.com' }
     ];
   }
@@ -2148,7 +2165,18 @@ class WebRTCTransport {
       const conn = this.peer.connect(hostPeerId, { reliable: true });
 
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('连接主机超时(30秒)，请检查房间码和网络')), 30000);
+        const timeout = setTimeout(() => {
+          // 超时后提供友好的错误信息
+          let errorMsg = '连接主机超时(30秒)';
+          // 检测可能的网络问题
+          if (navigator.onLine === false) {
+            errorMsg = '设备离线 - 请检查网络连接';
+          } else {
+            errorMsg += '。可能原因：①手机使用VPN/移动数据导致NAT穿透失败 ②主机已离线 ③网络防火墙阻止';
+          }
+          reject(new Error(errorMsg));
+        }, 30000);
+        
         conn.on('open', () => {
           clearTimeout(timeout);
           resolve();
@@ -2175,9 +2203,18 @@ class WebRTCTransport {
       this._updateStatus();
     } catch (err) {
       this.status = 'error';
-      this.lastError = err.message;
+      // 提供更友好的错误信息
+      let friendlyError = err.message;
+      if (err.message.includes('timeout') || err.message.includes('超时')) {
+        friendlyError = '连接超时 - 请检查：①主机是否在线 ②手机是否使用VPN(建议关闭) ③尝试换一个WiFi';
+      } else if (err.type === 'peer-unavailable') {
+        friendlyError = '主机不存在或已离开 - 请让主机重新创建房间';
+      } else if (err.type === 'network' || err.type === 'disconnected') {
+        friendlyError = '网络连接失败 - 请检查手机网络设置';
+      }
+      this.lastError = friendlyError;
       this._updateStatus();
-      throw err;
+      throw new Error(friendlyError);
     }
   }
 
