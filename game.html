@@ -1972,22 +1972,17 @@ class WebRTCTransport {
     this.myPeerId = null;
   }
 
-  // 获取 ICE 服务器配置 - 支持多 STUN 服务器
+  // 获取 ICE 服务器配置 - 使用可靠的 STUN 服务器
   _getIceServers() {
     return [
-      // 国内 STUN 服务器（优先）
-      { urls: 'stun:stun.miwifi.com:3478' },
-      { urls: 'stun:stun.chat.bilibili.com:3478' },
-      { urls: 'stun:stun.miwifi.com:3478?transport=udp' },
-      // 阿里云 STUN
-      { urls: 'stun:stun.aliyun.com:3478' },
-      // 腾讯云 STUN
-      { urls: 'stun:stun.tencentcloud.com:3478' },
-      // 国际 STUN 服务器
+      // Google STUN（最稳定可靠）
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
+      // 国内可能可达的 STUN
+      { urls: 'stun:stun.miwifi.com:3478' },
+      { urls: 'stun:stun.chat.bilibili.com:3478' },
       // Mozilla STUN
       { urls: 'stun:stun.services.mozilla.com' }
     ];
