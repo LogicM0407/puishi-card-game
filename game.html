@@ -1972,6 +1972,27 @@ class WebRTCTransport {
     this.myPeerId = null;
   }
 
+  // 获取 ICE 服务器配置 - 支持多 STUN 服务器
+  _getIceServers() {
+    return [
+      // 国内 STUN 服务器（优先）
+      { urls: 'stun:stun.miwifi.com:3478' },
+      { urls: 'stun:stun.chat.bilibili.com:3478' },
+      { urls: 'stun:stun.miwifi.com:3478?transport=udp' },
+      // 阿里云 STUN
+      { urls: 'stun:stun.aliyun.com:3478' },
+      // 腾讯云 STUN
+      { urls: 'stun:stun.tencentcloud.com:3478' },
+      // 国际 STUN 服务器
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      // Mozilla STUN
+      { urls: 'stun:stun.services.mozilla.com' }
+    ];
+  }
+
   async connect() {
     this.status = 'connecting';
     this._updateStatus();
@@ -2001,14 +2022,7 @@ class WebRTCTransport {
         this.peer = new Peer(this.myPeerId, {
           debug: 1,
           config: {
-            iceServers: [
-              // 国内可达的 STUN 服务器
-              { urls: 'stun:stun.miwifi.com:3478' },
-              { urls: 'stun:stun.chat.bilibili.com:3478' },
-              // Google STUN (如果翻墙可用)
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
+            iceServers: this._getIceServers()
           }
         });
 
@@ -2028,7 +2042,7 @@ class WebRTCTransport {
         });
 
         await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('PeerJS 连接超时(15秒)，请检查网络')), 15000);
+          const timeout = setTimeout(() => reject(new Error('PeerJS 连接超时(30秒)，请检查网络')), 30000);
           this.peer.on('open', () => {
             clearTimeout(timeout);
             this.status = 'connected';
@@ -2069,19 +2083,12 @@ class WebRTCTransport {
         this.peer = new Peer(this.myPeerId, {
           debug: 1,
           config: {
-            iceServers: [
-              // 国内可达的 STUN 服务器
-              { urls: 'stun:stun.miwifi.com:3478' },
-              { urls: 'stun:stun.chat.bilibili.com:3478' },
-              // Google STUN (如果翻墙可用)
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
+            iceServers: this._getIceServers()
           }
         });
 
         await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('PeerJS 连接超时(15秒)，请检查网络')), 15000);
+          const timeout = setTimeout(() => reject(new Error('PeerJS 连接超时(30秒)，请检查网络')), 30000);
           this.peer.on('open', () => {
             clearTimeout(timeout);
             this.status = 'connected';
@@ -2143,7 +2150,7 @@ class WebRTCTransport {
       const conn = this.peer.connect(hostPeerId, { reliable: true });
 
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('连接主机超时(15秒)，请检查房间码和网络')), 15000);
+        const timeout = setTimeout(() => reject(new Error('连接主机超时(30秒)，请检查房间码和网络')), 30000);
         conn.on('open', () => {
           clearTimeout(timeout);
           resolve();
