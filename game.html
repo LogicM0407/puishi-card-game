@@ -1894,30 +1894,64 @@ render();
 </script>
 
 <!-- PeerJS 库 - 用于 WebRTC P2P 跨网络联机 -->
-<!-- 尝试多个 CDN 源加载 -->
 <script>
-  // 检测当前环境
-  const isGitHubPages = location.hostname.includes('github.io');
+(function() {
+  const cdnSources = [
+    'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
+    'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js',
+    'https://cdn.bootcdn.net/ajax/libs/peerjs/1.5.4/peerjs.min.js'
+  ];
+  let sourceIndex = 0;
   
-  if (isGitHubPages) {
-    // GitHub Pages 环境：直接使用 CDN
-    document.write('<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"><\/script>');
-  } else {
-    // 本地服务器环境：优先本地，失败回退 CDN
-    document.write('<script src="/peerjs.min.js" onerror="this.onerror=null;this.src=\'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js\'"><\/script>');
+  function tryLoadCDN() {
+    if (sourceIndex >= cdnSources.length) {
+      console.error('[WebRTC] 所有 CDN 均加载失败！请检查网络连接');
+      window.__peerjsLoaded = false;
+      return;
+    }
+    
+    const script = document.createElement('script');
+    script.src = cdnSources[sourceIndex];
+    script.onload = function() {
+      if (typeof Peer !== 'undefined') {
+        console.log('[WebRTC] PeerJS 加载成功，源：' + cdnSources[sourceIndex]);
+        window.__peerjsLoaded = true;
+      } else {
+        console.warn('[WebRTC] CDN 加载但 Peer 未定义，尝试下一个...');
+        sourceIndex++;
+        tryLoadCDN();
+      }
+    };
+    script.onerror = function() {
+      console.warn('[WebRTC] CDN 加载失败：' + cdnSources[sourceIndex] + '，尝试下一个...');
+      sourceIndex++;
+      tryLoadCDN();
+    };
+    document.head.appendChild(script);
   }
+  
+  // 开始加载
+  tryLoadCDN();
+})();
 </script>
 <script>
-  if (typeof Peer === 'undefined') {
-    console.error('[WebRTC] PeerJS 库加载失败！正在尝试备用 CDN...');
-    // 最终回退：尝试 bootcdn
-    const backupScript = document.createElement('script');
-    backupScript.src = 'https://cdn.bootcdn.net/ajax/libs/peerjs/1.5.4/peerjs.min.js';
-    backupScript.onerror = () => {
-      console.error('[WebRTC] 所有 CDN 均加载失败！请检查网络连接');
-    };
-    document.head.appendChild(backupScript);
-  }
+// 等待 PeerJS 加载完成的辅助函数
+function waitForPeerJS(timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    const checkInterval = setInterval(() => {
+      if (typeof Peer !== 'undefined') {
+        clearInterval(checkInterval);
+        resolve(true);
+      } else if (Date.now() - startTime > timeout) {
+        clearInterval(checkInterval);
+        reject(new Error('PeerJS 加载超时'));
+      }
+    }, 100);
+  });
+}
+window.waitForPeerJS = waitForPeerJS;
 </script>
 <script>
 /* ============================================================
@@ -1941,6 +1975,15 @@ class WebRTCTransport {
   async connect() {
     this.status = 'connecting';
     this._updateStatus();
+
+    // 等待 PeerJS 加载完成
+    try {
+      if (typeof window.waitForPeerJS === 'function') {
+        await window.waitForPeerJS(15000);
+      }
+    } catch (e) {
+      // 忽略错误，继续检查
+    }
 
     // 检查 PeerJS 是否可用
     if (typeof Peer === 'undefined') {
