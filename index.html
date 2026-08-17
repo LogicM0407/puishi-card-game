@@ -2,11 +2,14 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=game.html">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>谱师卡牌 - 正在加载...</title>
   <script>
-    // 立即重定向到 game.html
-    window.location.replace('game.html');
+    // 添加时间戳强制刷新缓存
+    var timestamp = Date.now();
+    window.location.replace('game.html?v=' + timestamp);
   </script>
 </head>
 <body>
