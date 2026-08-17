@@ -587,12 +587,14 @@ function roomConnectWebRTC(code, myName, intention) {
         if (isHost) {
           // 主机
           ui.room.isHost = true;
+          ui.room.myName = myName;
           ui.room.members = [{id:myId, name:myName, ready:false, isHost:true}];
           resolve({joined:true, isHost:true, created:true});
         } else {
           // 客户端 - 连接主机
           return transport.joinAsClient(hostPeerId, myName).then(() => {
             ui.room.isHost = false;
+            ui.room.myName = myName;
             resolve({joined:true, isHost:false});
           });
         }
@@ -2138,9 +2140,19 @@ class WebRTCTransport {
     });
 
     conn.on('data', (data) => {
-      console.log(`[WebRTC] 收到数据 from ${conn.peer}:`, typeof data, JSON.stringify(data).slice(0, 200));
-      this._onData(conn, data);
-    });
+        // 统一处理：确保数据是对象格式
+        let parsedData = data;
+        if (typeof data === 'string') {
+          try {
+            parsedData = JSON.parse(data);
+          } catch (e) {
+            console.warn('[WebRTC] Failed to parse string data:', data);
+            return;
+          }
+        }
+        console.log(`[WebRTC] 收到数据 from ${conn.peer}:`, parsedData?.type || typeof data);
+        this._onData(conn, parsedData);
+      });
 
     conn.on('close', () => {
       console.log(`[WebRTC] 连接关闭: ${conn.peer}`);
@@ -2190,14 +2202,15 @@ class WebRTCTransport {
       this.connections.set(conn.peer, {conn, playerId: null, name: myName});
       this._handleConnection(conn);
 
-      // 发送加入请求
-      conn.send({
+      // 发送加入请求 - 使用字符串格式确保一致性
+      const joinMsg = {
         type: 'join_webrtc',
         roomCode: this.roomCode,
         playerId: ui.room.myId,
         name: myName,
         peerId: this.myPeerId
-      });
+      };
+      conn.send(JSON.stringify(joinMsg));
 
       this.status = 'connected';
       this._updateStatus();
@@ -2239,14 +2252,24 @@ class WebRTCTransport {
 
       console.log(`[WebRTC] Player ${data.name} (${data.playerId}) joined`);
       
-      // 通知所有人有新玩家加入
+      // 生成更新后的成员列表
+      const membersList = this._getMembersList();
+      
+      // 通知所有人有新玩家加入（包括主机自己）
       const memberUpdate = {
         type: 'webrtc_member_update',
         roomCode: this.roomCode,
-        members: this._getMembersList(),
+        members: membersList,
         fromId: ui.room?.myId || this.myPeerId
       };
+      
+      // 广播给所有客户端
       this._broadcast(memberUpdate);
+      
+      // 关键：主机自己也要更新成员列表！
+      if (this.userHandler) {
+        this.userHandler({ data: memberUpdate });
+      }
       
       // 直接向新玩家发送 hello
       if (conn.open) {
@@ -2254,7 +2277,7 @@ class WebRTCTransport {
           type: 'hello',
           roomCode: this.roomCode,
           fromId: ui.room?.myId || this.myPeerId,
-          members: this._getMembersList(),
+          members: membersList,
           settings: { 
             numPlayers: ui.setupCache?.numPlayers || 2, 
             totalRounds: ui.setupCache?.totalRounds || 10 
@@ -2277,17 +2300,28 @@ class WebRTCTransport {
       }
     }
 
-    // 调用用户处理器
-    if (this.userHandler) {
+    // 调用用户处理器（传递原始消息，用于其他处理）
+    if (this.userHandler && data.type !== 'webrtc_member_update') {
       this.userHandler({ data: data });
     }
   }
 
   _getMembersList() {
-    return Array.from(this.connections.values()).map(c => ({
+    // 获取所有连接的客户端
+    const members = Array.from(this.connections.values()).map(c => ({
       id: c.playerId || c.conn.peer,
-      name: c.name || '玩家'
+      name: c.name || '玩家',
+      isHost: false
     }));
+    // 如果是主机，把自己加在最前面
+    if (ui.room?.isHost) {
+      members.unshift({
+        id: ui.room.myId,
+        name: ui.room.myName || '主机',
+        isHost: true
+      });
+    }
+    return members;
   }
 
   broadcast(msgObj) {
