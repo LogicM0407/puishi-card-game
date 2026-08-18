@@ -676,8 +676,14 @@
 <script>
 "use strict";
 
-const VERSION = "v1.0.2";
+const VERSION = "v1.0.3";
 const CHANGELOG = Object.freeze([
+  { version: "v1.0.3", items: [
+    "修复：AI 托管玩家的技能牌 / 角色技能 / 评议按钮在前端未禁用，导致点击后始终被服务端拒绝、显示“自己的回合使用”却无法使用的问题",
+    "修复：PLAY_CARD 动作缺少“只能在自己的回合”校验，与其他动作保持一致",
+    "修复：打中二 / 打舞萌 / 打音击事件选择角色时，技能被暂时禁用或永久失效的角色无法参与选择；现在所有角色（无论是否禁用）都可被选中并显示禁用状态标签",
+    "新增：在自己回合的角色区域，若存在被禁用的角色，新增“被禁用的角色”分栏与「花 10 声望恢复被禁用角色」按钮；点击后可花费 10 点声望立即清除一个角色的永久失效 / 禁用回合状态"
+  ]},
   { version: "v1.0.2", items: [
     "完善房间系统：localStorage 自动重连、心跳ACK重试、断线/重连消息、手动房主转让、断线90秒AI永久托管、120秒无操作AI永久接管",
     "新增聊天系统：房间频道、快捷短语、系统消息、房主禁言、敏感词过滤、玩家屏蔽",
@@ -2265,7 +2271,7 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
     game.turn.hasDrawn = true;
     result = ok({ draw: drawCard(playerIndex) });
   } else if (action === "PLAY_CARD") {
-    if (game.phase !== GAME_PHASE.TURN) return fail("现在不能打出技能牌");
+    if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合使用技能牌");
     result = executeSkillCard(playerIndex, payload.cardUid, payload);
   } else if (action === "ACTIVATE_CHARACTER") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合发动角色技能");
@@ -2273,6 +2279,20 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   } else if (action === "REVIEW_VOTE") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合进行评议");
     result = executeReviewVote(playerIndex, payload);
+  } else if (action === "RESTORE_CHARACTER") {
+    if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合恢复角色");
+    const instance = player.characters.find(c => c.uid === payload.characterUid);
+    if (!instance) return fail("未找到该角色");
+    if (!instance.permanentlyDisabled && instance.disabledTurns <= 0) return fail("该角色技能未被禁用，无需恢复");
+    if (player.reputation < 10) return fail("声望不足 10 点");
+    const wasPermanent = instance.permanentlyDisabled;
+    const origTurns = instance.disabledTurns;
+    gainReputation(playerIndex, -10);
+    instance.permanentlyDisabled = false;
+    instance.disabledTurns = 0;
+    const def = characterDefinition(instance.id);
+    appendLog(`${player.name} 花费 10 点声望使「${def.name}」立即恢复可用状态（原状态：${wasPermanent ? "永久失效" : `禁用${origTurns}回合`}）。`, "effect");
+    result = ok();
   } else if (action === "END_TURN") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("现在不能结束回合");
     result = endTurn(playerIndex);
@@ -3582,8 +3602,8 @@ function render() {
       ui.modal = {
         kind: "event-choose",
         title: `事件：${event.name}`,
-        description: event.description + "（请选择自己的1名角色和另一位玩家）",
-        ownCharacters: me?.characters.filter(c => !c.permanentlyDisabled) || [],
+        description: event.description + "（请选择自己的1名角色和另一位玩家。注：技能被禁用的角色也可参与拼机）",
+        ownCharacters: me?.characters || [],
         targets: game.players.filter(p => p.memberId !== me?.memberId),
         selectedCharacterUid: null,
         selectedTargetMemberId: null
@@ -3596,10 +3616,10 @@ function render() {
         kind: "event-response",
         title: `事件响应：${event.name}`,
         description: mustAccept
-          ? `${actor.name} 邀请你一起「${event.name}」，必须参与。请选择自己的1名角色。`
-          : `${actor.name} 邀请你一起「${event.name}」。同意时选择1名角色拼机；拒绝时发起者声望-5但获得能力加成。`,
+          ? `${actor.name} 邀请你一起「${event.name}」，必须参与。请选择自己的1名角色（技能被禁用的角色也可参与）。`
+          : `${actor.name} 邀请你一起「${event.name}」。同意时选择1名角色拼机（技能被禁用的角色也可参与）；拒绝时发起者声望-5但获得能力加成。`,
         mustAccept,
-        myCharacters: targetPlayer?.characters.filter(c => !c.permanentlyDisabled) || [],
+        myCharacters: targetPlayer?.characters || [],
         selectedCharacterUid: null,
         decision: mustAccept ? "accept" : null
       };
@@ -3943,6 +3963,24 @@ function renderTurn(me) {
       <div class="section-head"><h2>角色技能</h2><span class="section-note">角色牌只能发动技能</span></div>
       ${me?.characters.length ? `<div class="ability-grid">${me.characters.map(instance => renderAbility(instance, me, ownTurn)).join("")}</div>` : '<div class="empty">未购置角色</div>'}
     </section>
+    ${(() => {
+      const managed = me && !me.isBot && me.aiControlled;
+      const disabledChars = (me?.characters || []).filter(c => c.permanentlyDisabled || c.disabledTurns > 0);
+      const canRestore = ownTurn && game.phase === GAME_PHASE.TURN && game.round > 0 && !ui.pendingRequest && !managed && (me?.reputation ?? 0) >= 10 && disabledChars.length > 0;
+      if (!disabledChars.length && !canRestore) return "";
+      const items = disabledChars.map(instance => {
+        const def = characterDefinition(instance.id);
+        const status = instance.permanentlyDisabled ? "永久失效" : `禁用${instance.disabledTurns}回合`;
+        return `<span class="character-chip bad" title="${escapeHtml(def.name)} · ${status}">${escapeHtml(def.name.slice(0, 2))} · ${status}</span>`;
+      }).join("");
+      return `<section class="section">
+        <div class="section-head"><h2>被禁用的角色</h2><span class="section-note">共 ${disabledChars.length} 名</span></div>
+        ${disabledChars.length ? `<div class="mini-characters">${items}</div>
+        <div style="margin-top:10px">
+          <button class="btn" id="restore-character-btn" ${canRestore ? "" : "disabled"} title="${canRestore ? `花费 10 点声望使一个被禁用的角色立即恢复可用` : me?.reputation < 10 ? `需要 10 点声望（当前 ${me?.reputation ?? 0}）` : !ownTurn ? `等待自己的回合` : managed ? `AI 托管中不可操作` : `暂无可恢复角色`}">${icon("rotate-ccw", 14)} 花 10 声望恢复被禁用角色</button>
+        </div>` : '<div class="empty">暂无被禁用的角色</div>'}
+      </section>`;
+    })()}
     <div class="actionbar">
       <span class="action-hint">${instruction}</span>
       ${ownTurn && !firstRound && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${ui.pendingRequest ? "disabled" : ""}>${icon("hand", 15)} 摸1张牌</button>` : ""}
@@ -3961,29 +3999,36 @@ function renderPlayerStatuses(me, ownTurn) {
     me.disableAllSkillTurns > 0 || me.disableUntilOwnTurn ? '<span class="tag bad">本回合不可发动技能</span>' : "",
     me.disableCharacterTurns > 0 ? `<span class="tag bad">角色技能禁用${me.disableCharacterTurns}回合</span>` : ""
   ].filter(Boolean);
-  const canReview = ownTurn && game.round > 1 && me.reviewTurns > 0 && !me.reviewActionUsed && !isAllSkillBlocked(me) && !ui.pendingRequest;
+  const managed = me && !me.isBot && me.aiControlled;
+  const canReview = ownTurn && game.round > 1 && me.reviewTurns > 0 && !me.reviewActionUsed && !isAllSkillBlocked(me) && !ui.pendingRequest && !managed;
   if (!statuses.length && !canReview) return "";
   return `<div class="status-row">${statuses.join("")}${canReview ? `<button class="btn small" id="review-vote">${icon("tickets", 14)} 进行评议</button>` : ""}</div>`;
 }
 
 function renderSkillCard(card, me, ownTurn) {
   const definition = skillDefinition(card.cardId);
-  const canUse = ownTurn && game.round > 1 && !ui.pendingRequest && !isAllSkillBlocked(me);
+  const managed = me && !me.isBot && me.aiControlled;
+  const canUse = ownTurn && game.round > 1 && !ui.pendingRequest && !isAllSkillBlocked(me) && !managed;
+  let meta = "自己的回合使用";
+  if (game.round === 1) meta = "第1轮不可使用";
+  else if (managed) meta = "AI 托管中不可操作";
+  else if (isAllSkillBlocked(me)) meta = "本回合不可发动技能";
   return `<article class="game-card skill">
     <div class="card-top"><span class="card-kind">技能牌</span><span class="rarity">己方</span></div>
     <div class="card-glyph">${icon(definition.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(definition.name)}</div>
     <div class="card-desc">${escapeHtml(definition.description)}</div>
-    <div class="card-meta">${game.round === 1 ? "第1轮不可使用" : "自己的回合使用"}</div>
+    <div class="card-meta">${meta}</div>
     <div class="card-action"><button class="btn" data-play-card="${card.uid}" ${canUse ? "" : "disabled"}>${icon("play", 13)} 使用</button></div>
   </article>`;
 }
 
 function renderAbility(instance, me, ownTurn) {
   const definition = characterDefinition(instance.id);
+  const managed = me && !me.isBot && me.aiControlled;
   return definition.abilities.map((ability, abilityIndex) => {
-    const allowed = ownTurn ? canActivateCharacter(me, instance, ability) : fail("等待自己的回合");
-    const canUse = ownTurn && !ui.pendingRequest && allowed.ok;
+    const allowed = managed ? fail("AI 托管中不可操作") : (ownTurn ? canActivateCharacter(me, instance, ability) : fail("等待自己的回合"));
+    const canUse = ownTurn && !ui.pendingRequest && allowed.ok && !managed;
     return `<article class="ability-item">
       <div class="ability-head"><div><div class="ability-name">${definition.abilities.length > 1 ? `角色技能${abilityIndex + 1}` : "角色技能"}</div><div class="ability-owner">${escapeHtml(definition.name)}</div></div><span class="tag ${canUse ? "good" : ""}">${canUse ? "可发动" : escapeHtml(allowed.reason)}</span></div>
       <div class="ability-desc">${escapeHtml(ability.description)}</div>
@@ -4003,6 +4048,22 @@ function bindTurn(me) {
     button.onclick = () => openAbilityAction(button.dataset.character, button.dataset.ability);
   });
   document.getElementById("review-vote")?.addEventListener("click", openReviewAction);
+  document.getElementById("restore-character-btn")?.addEventListener("click", openRestoreCharacterAction);
+}
+
+function openRestoreCharacterAction() {
+  const me = myGamePlayer();
+  if (!me) return;
+  const disabled = me.characters.filter(c => c.permanentlyDisabled || c.disabledTurns > 0);
+  if (!disabled.length) return;
+  ui.modal = {
+    kind: "restore-character",
+    title: "花 10 声望恢复被禁用角色",
+    description: `选择一个被禁用的角色，立即花费 10 点声望（当前：${me.reputation} 点）使其恢复可用状态。恢复永久失效的角色后可重新发动技能。`,
+    characters: disabled,
+    selectedCharacterUid: null
+  };
+  render();
 }
 
 function openCardAction(cardUid) {
@@ -4083,7 +4144,8 @@ function renderActionModal() {
       ? modal.ownCharacters.map(instance => {
           const def = characterDefinition(instance.id);
           const selected = modal.selectedCharacterUid === instance.uid;
-          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+          const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
         }).join("")
       : '<div class="empty">没有可用的角色牌。</div>';
     const targetButtons = modal.targets.map(target => {
@@ -4108,13 +4170,24 @@ function renderActionModal() {
       : modal.myCharacters.map(instance => {
           const def = characterDefinition(instance.id);
           const selected = modal.selectedCharacterUid === instance.uid;
-          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+          const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
         }).join("");
     const canConfirm = modal.decision === "refuse" || (modal.decision === "accept" && modal.selectedCharacterUid);
     choices = `
       ${acceptButtons}
       ${showCharacters ? `<div class="event-step"><div class="event-step-title">选择出战的角色</div><div class="target-list">${characterButtons}</div></div>` : ""}
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "restore-character") {
+    const characterButtons = modal.characters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedCharacterUid === instance.uid;
+      const status = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : `<span class="tag bad">禁用${instance.disabledTurns}回合</span>`;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-restore-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${status}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    choices = `
+      <div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${characterButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>花费 10 声望恢复</button></div>`;
   }
   const canCloseModal = modal.kind !== "event-choose" && modal.kind !== "event-response";
   app.insertAdjacentHTML("beforeend", `<div class="modal"><div class="modal-box">
@@ -4170,6 +4243,9 @@ function renderActionModal() {
   document.querySelectorAll("[data-event-resp-character]").forEach(button => {
     button.onclick = () => { modal.selectedCharacterUid = button.dataset.eventRespCharacter; render(); };
   });
+  document.querySelectorAll("[data-restore-character]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.restoreCharacter; render(); };
+  });
   document.getElementById("confirm-modal")?.addEventListener("click", () => {
     ui.modal = null;
     if (modal.kind === "event-choose") {
@@ -4181,6 +4257,8 @@ function renderActionModal() {
       const payload = { decision: modal.decision };
       if (modal.decision === "accept") payload.targetCharacterUid = modal.selectedCharacterUid;
       sendGameAction("RESOLVE_EVENT", payload);
+    } else if (modal.kind === "restore-character") {
+      sendGameAction("RESTORE_CHARACTER", { characterUid: modal.selectedCharacterUid });
     } else if (modal.kind === "three-dimensions") {
       sendGameAction("ACTIVATE_CHARACTER", {
         characterId: modal.characterId,
