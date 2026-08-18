@@ -1427,7 +1427,7 @@ function finishDraft(playerIndex) {
     game.round = 1;
     game.currentPlayerIndex = 0;
     dealInitialHands();
-    appendLog("购置阶段结束。第1轮开始，每位玩家必须发动1次角色技能。", "event");
+    appendLog("购置阶段结束。第1轮开始，每位玩家只能发动1次角色技能，不摸牌且不能使用技能牌。", "event");
     beginTurn();
   } else {
     game.currentPlayerIndex = (game.currentPlayerIndex + 1) % game.players.length;
@@ -1447,8 +1447,9 @@ function canActivateCharacter(player, instance, ability) {
   if (instance.permanentlyDisabled) return fail("该角色技能已永久失效");
   const useKey = `${instance.uid}:${ability.id}`;
   if (game.turn.usedAbilityIds.includes(useKey)) return fail("该技能本回合已经发动过");
-  const firstRoundOverride = game.round === 1 && !player.firstRoundSkillUsed;
-  if (!firstRoundOverride && (player.disableCharacterTurns > 0 || isAllSkillBlocked(player) || instance.disabledTurns > 0)) {
+  const firstRound = game.round === 1;
+  if (firstRound && player.firstRoundSkillUsed) return fail("第1轮只能发动1次角色技能");
+  if (!firstRound && (player.disableCharacterTurns > 0 || isAllSkillBlocked(player) || instance.disabledTurns > 0)) {
     return fail("本回合角色技能被禁用");
   }
   if (instance.cooldowns[ability.id] > 0) return fail(`技能冷却剩余${instance.cooldowns[ability.id]}回合`);
@@ -1478,7 +1479,7 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     if (!target || target.memberId === player.memberId) return fail("请选择1名其他玩家");
   }
 
-  if (game.round === 1 && !player.firstRoundSkillUsed) {
+  if (game.round === 1) {
     setScore(playerIndex, "selection", characterSelection(definition), {
       sourcePlayerIndex: playerIndex,
       allowSelectionChange: true,
@@ -1541,13 +1542,17 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
       appendLog(`${player.name} 发动福瑞王技能并触发“创新”。`, "effect");
     }
   } else if (ability.id === "canada-wjc") {
-    game.players.forEach((target, targetIndex) => {
-      if (targetIndex === playerIndex) return;
-      target.characters.forEach(character => {
-        if (character.id !== "canada-goose") character.disabledTurns = Math.max(character.disabledTurns, 1);
+    if (game.round === 1) {
+      appendLog(`${player.name} 发动WJC：第1轮限制他人角色技能的效果无效。`, "effect");
+    } else {
+      game.players.forEach((target, targetIndex) => {
+        if (targetIndex === playerIndex) return;
+        target.characters.forEach(character => {
+          if (character.id !== "canada-goose") character.disabledTurns = Math.max(character.disabledTurns, 1);
+        });
       });
-    });
-    appendLog(`${player.name} 发动WJC：其他玩家的非加拿大鹅角色卡下回合禁用。`, "effect");
+      appendLog(`${player.name} 发动WJC：其他玩家的非加拿大鹅角色卡下回合禁用。`, "effect");
+    }
   } else if (ability.id === "canada-shift") {
     const targetIds = Array.isArray(payload.targetMemberIds) ? [...new Set(payload.targetMemberIds)].slice(0, 2) : [];
     targetIds.forEach(memberId => {
@@ -1557,12 +1562,16 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     applyScoreChange(playerIndex, randomDimension(), 2, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 发动加拿大鹅技能。`, "effect");
   } else if (ability.id === "disinfectant-main") {
-    const cards = game.players.flatMap(target => target.characters).filter(character => !character.permanentlyDisabled);
-    shuffle(cards);
-    cards.slice(0, Math.floor(game.players.length / 3)).forEach(character => {
-      character.disabledTurns = Math.max(character.disabledTurns, 1);
-    });
-    appendLog(`${player.name} 发动“魅惑”。`, "effect");
+    if (game.round === 1) {
+      appendLog(`${player.name} 发动“魅惑”：第1轮限制他人角色技能的效果无效。`, "effect");
+    } else {
+      const cards = game.players.flatMap(target => target.characters).filter(character => !character.permanentlyDisabled);
+      shuffle(cards);
+      cards.slice(0, Math.floor(game.players.length / 3)).forEach(character => {
+        character.disabledTurns = Math.max(character.disabledTurns, 1);
+      });
+      appendLog(`${player.name} 发动“魅惑”。`, "effect");
+    }
   } else if (ability.id === "ziwei-main") {
     if (Math.random() < .8) {
       const dimension = randomDimension();
@@ -1613,6 +1622,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   const ownTurn = game.currentPlayerIndex === playerIndex;
   if (!definition) return fail("卡牌数据不存在");
   if (!ownTurn) return fail("该牌只能在自己的回合打出");
+  if (game.round === 1) return fail("第1轮不能使用技能牌");
   if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
 
   let target = null;
@@ -1666,6 +1676,7 @@ function handleNonPlayCardLoss(playerIndex, count) {
 
 function executeReviewVote(playerIndex, payload = {}) {
   const player = game.players[playerIndex];
+  if (game.round === 1) return fail("第1轮不能使用技能牌");
   if (player.reviewTurns <= 0) return fail("当前没有评议身份");
   if (player.reviewActionUsed) return fail("本回合已经进行过评议");
   if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
@@ -1688,9 +1699,10 @@ function executeReviewVote(playerIndex, payload = {}) {
 
 function endTurn(playerIndex) {
   const player = game.players[playerIndex];
-  if (!game.turn.hasDrawn) return fail("必须先完成摸牌");
-  if (game.round === 1 && !player.firstRoundSkillUsed) {
-    return fail("第1轮必须发动至少1次角色技能");
+  if (game.round === 1) {
+    if (!player.firstRoundSkillUsed) return fail("第1轮必须发动1次角色技能");
+  } else if (!game.turn.hasDrawn) {
+    return fail("必须先完成摸牌");
   }
   if (player.disableCharacterTurns > 0) player.disableCharacterTurns--;
   if (player.disableAllSkillTurns > 0) player.disableAllSkillTurns--;
@@ -1770,6 +1782,7 @@ function hostDispatch(memberId, action, payload = {}) {
     result = finishDraft(playerIndex);
   } else if (action === "DRAW") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("现在不能摸牌");
+    if (game.round === 1) return fail("第1轮不摸牌");
     if (game.turn.hasDrawn) return fail("本回合已经摸过牌");
     game.turn.hasDrawn = true;
     result = ok({ draw: drawCard(playerIndex) });
@@ -2512,15 +2525,16 @@ function bindDraft(me) {
 
 function renderTurn(me) {
   const ownTurn = isMyTurn() && !isSpectator();
-  const mustUseCharacter = ownTurn && game.round === 1 && !me?.firstRoundSkillUsed;
+  const firstRound = game.round === 1;
+  const mustUseCharacter = ownTurn && firstRound && !me?.firstRoundSkillUsed;
   const hand = me?.hand || [];
   let instruction = `等待 ${escapeHtml(currentPlayer()?.name)} 完成回合`;
-  if (mustUseCharacter && !game.turn.hasDrawn) instruction = "第1轮至少发动1次角色技能，本轮还需摸1张牌";
-  else if (mustUseCharacter) instruction = "第1轮至少发动1次角色技能";
+  if (mustUseCharacter) instruction = "第1轮只能发动1次角色技能，不摸牌且不能使用技能牌";
+  else if (ownTurn && firstRound) instruction = "角色技能已发动，可以结束回合";
   else if (ownTurn && !game.turn.hasDrawn) instruction = "本轮必须且只能摸1张牌";
   else if (ownTurn) instruction = "可以发动角色技能、打出技能牌或结束回合";
   return `
-    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 本回合打出 ${game.turn.skillCardsPlayed} 张技能牌</span></div></div>
+    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>${firstRound ? "首轮不摸牌 · 禁用技能牌" : `牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 本回合打出 ${game.turn.skillCardsPlayed} 张技能牌`}</span></div></div>
     ${renderPlayerStatuses(me, ownTurn)}
     <section class="section">
       <div class="section-head"><h2>手牌</h2><span class="section-note">${me ? `${me.handCount}张` : "不可见"}</span></div>
@@ -2532,8 +2546,8 @@ function renderTurn(me) {
     </section>
     <div class="actionbar">
       <span class="action-hint">${instruction}</span>
-      ${ownTurn && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${ui.pendingRequest ? "disabled" : ""}>${icon("hand", 15)} 摸1张牌</button>` : ""}
-      ${ownTurn ? `<button class="btn coral" id="end-turn" ${(!game.turn.hasDrawn || mustUseCharacter || ui.pendingRequest) ? "disabled" : ""}>${icon("skip-forward", 15)} 结束回合</button>` : ""}
+      ${ownTurn && !firstRound && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${ui.pendingRequest ? "disabled" : ""}>${icon("hand", 15)} 摸1张牌</button>` : ""}
+      ${ownTurn ? `<button class="btn coral" id="end-turn" ${(mustUseCharacter || (!firstRound && !game.turn.hasDrawn) || ui.pendingRequest) ? "disabled" : ""}>${icon("skip-forward", 15)} 结束回合</button>` : ""}
     </div>`;
 }
 
@@ -2548,20 +2562,20 @@ function renderPlayerStatuses(me, ownTurn) {
     me.disableAllSkillTurns > 0 || me.disableUntilOwnTurn ? '<span class="tag bad">本回合不可发动技能</span>' : "",
     me.disableCharacterTurns > 0 ? `<span class="tag bad">角色技能禁用${me.disableCharacterTurns}回合</span>` : ""
   ].filter(Boolean);
-  const canReview = ownTurn && me.reviewTurns > 0 && !me.reviewActionUsed && !isAllSkillBlocked(me) && !ui.pendingRequest;
+  const canReview = ownTurn && game.round > 1 && me.reviewTurns > 0 && !me.reviewActionUsed && !isAllSkillBlocked(me) && !ui.pendingRequest;
   if (!statuses.length && !canReview) return "";
   return `<div class="status-row">${statuses.join("")}${canReview ? `<button class="btn small" id="review-vote">${icon("tickets", 14)} 进行评议</button>` : ""}</div>`;
 }
 
 function renderSkillCard(card, me, ownTurn) {
   const definition = skillDefinition(card.cardId);
-  const canUse = ownTurn && !ui.pendingRequest && !isAllSkillBlocked(me);
+  const canUse = ownTurn && game.round > 1 && !ui.pendingRequest && !isAllSkillBlocked(me);
   return `<article class="game-card skill">
     <div class="card-top"><span class="card-kind">技能牌</span><span class="rarity">己方</span></div>
     <div class="card-glyph">${icon(definition.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(definition.name)}</div>
     <div class="card-desc">${escapeHtml(definition.description)}</div>
-    <div class="card-meta">自己的回合使用</div>
+    <div class="card-meta">${game.round === 1 ? "第1轮不可使用" : "自己的回合使用"}</div>
     <div class="card-action"><button class="btn" data-play-card="${card.uid}" ${canUse ? "" : "disabled"}>${icon("play", 13)} 使用</button></div>
   </article>`;
 }
@@ -2760,8 +2774,8 @@ function renderRulesModal() {
     <ol>
       <li><strong>购置：</strong>每人12点，按S/A+/A/B+/B/C支付6/5/4/3/2/1点，不可重复购置同一角色。</li>
       <li><strong>开局：</strong>所有玩家轮流购置角色，然后从技能卡池抽取5张技能牌。</li>
-      <li><strong>回合：</strong>每轮必须且只能摸1张牌；自己的轮次可发动角色技能和技能牌。</li>
-      <li><strong>第1轮：</strong>每位玩家必须发动至少1次角色技能，以该角色数值确定初始选曲品味。</li>
+      <li><strong>回合：</strong>第2轮起，每轮必须且只能摸1张牌；自己的轮次可发动角色技能和技能牌。</li>
+      <li><strong>第1轮：</strong>每位玩家能且只能发动1次角色技能，不摸牌且不能使用技能牌；所用角色决定初始选曲品味，限制他人角色技能的效果无效。</li>
       <li><strong>事件牌：</strong>不进入手牌，摸到后强制触发，并重新回到卡池。</li>
       <li><strong>结算：</strong>选曲品味5%、配置水平40%、抽象动效20%、具象动效20%、创新程度15%；属性值在结算时加入总分，且可以为负。</li>
       <li><strong>房间：</strong>人数大于1人即可开始；开局后加入的成员只能观战，本局结束后再加入玩家列表。</li>
