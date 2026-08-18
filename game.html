@@ -953,7 +953,12 @@ const ui = {
   joinResolver: null,
   migrationTimer: null,
   hostLostAt: 0,
-  authorityBackup: null
+  authorityBackup: null,
+  pendingSyncMembers: new Set(),
+  hostResyncTimer: null,
+  pendingAcks: new Map(),
+  hostPeriodicTimer: null,
+  lastAckedSequence: new Map()
 };
 
 const room = {
@@ -2381,7 +2386,18 @@ function authorityBackupFor(memberId) {
   return successor?.id === memberId ? game : null;
 }
 
-function sendStateToPlayer(memberId, acknowledgedRequestId = "") {
+const ACK_TIMEOUT_MS = 3000;
+const ACK_MAX_RETRIES = 5;
+
+function clearAckTimeout(memberId) {
+  const entry = ui.pendingAcks.get(memberId);
+  if (entry) {
+    clearTimeout(entry.timer);
+    ui.pendingAcks.delete(memberId);
+  }
+}
+
+function sendSyncMessage(memberId, acknowledgedRequestId = "") {
   return room.transport?.sendToPlayer(memberId, {
     type: "SYNC",
     room: publicRoom(),
@@ -2389,6 +2405,85 @@ function sendStateToPlayer(memberId, acknowledgedRequestId = "") {
     authorityBackup: authorityBackupFor(memberId),
     acknowledgedRequestId
   }) || false;
+}
+
+function scheduleAckRetry(memberId, sequence, retries = 0) {
+  clearAckTimeout(memberId);
+  const timer = setTimeout(() => {
+    ui.pendingAcks.delete(memberId);
+    if (!room.isHost || !game) return;
+    const member = room.members.find(m => m.id === memberId);
+    if (!member?.connected) return;
+    if (retries >= ACK_MAX_RETRIES) {
+      ui.pendingSyncMembers.add(memberId);
+      scheduleHostResync();
+      return;
+    }
+    const delivered = sendSyncMessage(memberId);
+    if (delivered) {
+      scheduleAckRetry(memberId, sequence, retries + 1);
+    } else {
+      ui.pendingSyncMembers.add(memberId);
+      scheduleHostResync();
+    }
+  }, ACK_TIMEOUT_MS);
+  ui.pendingAcks.set(memberId, { sequence, timer, retries });
+}
+
+function sendStateToPlayer(memberId, acknowledgedRequestId = "") {
+  const delivered = sendSyncMessage(memberId, acknowledgedRequestId);
+  if (!delivered) {
+    ui.pendingSyncMembers.add(memberId);
+    scheduleHostResync();
+  } else {
+    ui.pendingSyncMembers.delete(memberId);
+    const sequence = game?.sequence ?? 0;
+    scheduleAckRetry(memberId, sequence);
+  }
+  return delivered;
+}
+
+function scheduleHostResync() {
+  if (!room.isHost || ui.hostResyncTimer) return;
+  ui.hostResyncTimer = setTimeout(() => {
+    ui.hostResyncTimer = null;
+    if (!room.isHost || !game) return;
+    const retry = [...ui.pendingSyncMembers];
+    ui.pendingSyncMembers.clear();
+    retry.forEach(memberId => {
+      const member = room.members.find(m => m.id === memberId);
+      if (member?.connected) {
+        const ok = sendSyncMessage(memberId);
+        if (ok) {
+          scheduleAckRetry(memberId, game?.sequence ?? 0);
+        } else {
+          ui.pendingSyncMembers.add(memberId);
+        }
+      }
+    });
+    if (ui.pendingSyncMembers.size > 0) scheduleHostResync();
+  }, 2000);
+}
+
+function scheduleHostPeriodicSync() {
+  clearTimeout(ui.hostPeriodicTimer);
+  ui.hostPeriodicTimer = null;
+  if (!room.isHost || !game) return;
+  ui.hostPeriodicTimer = setTimeout(() => {
+    ui.hostPeriodicTimer = null;
+    if (!room.isHost || !game) return;
+    const currentSeq = game.sequence ?? 0;
+    room.members.forEach(member => {
+      if (member.id === room.myId || !member.connected || member.isBot) return;
+      const ackEntry = ui.pendingAcks.get(member.id);
+      const lastAcked = ui.lastAckedSequence.get(member.id) ?? -1;
+      const hasPendingAck = ackEntry && ackEntry.sequence >= currentSeq;
+      if (lastAcked < currentSeq && !hasPendingAck) {
+        sendStateToPlayer(member.id);
+      }
+    });
+    scheduleHostPeriodicSync();
+  }, 5000);
 }
 
 function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
@@ -2405,6 +2500,7 @@ function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
   });
   render();
   scheduleBotAction();
+  scheduleHostPeriodicSync();
 }
 
 function sendWelcome(memberId) {
@@ -2436,7 +2532,7 @@ function scheduleStateCheck() {
       });
     }
     scheduleStateCheck();
-  }, 7000);
+  }, 5000);
 }
 
 function rememberGameAction(key, result) {
@@ -2508,6 +2604,8 @@ function handleJoin(message, meta) {
     member.disconnectedAt = 0;
     member.name = safeName;
     member.peerId = meta.peerId;
+    clearAckTimeout(member.id);
+    ui.lastAckedSequence.delete(member.id);
   } else {
     const spectator = room.lifecycle === ROOM_STATE.PLAYING ||
       room.lifecycle === ROOM_STATE.SETTLEMENT;
@@ -2568,11 +2666,16 @@ function handleNetworkMessage(message, meta = {}) {
   if (message.type === "SYNC") {
     const incomingSequence = message.game?.sequence ?? -1;
     const currentSequence = game?.sequence ?? -1;
-    if (!game || incomingSequence >= currentSequence) {
+    const applied = !game || incomingSequence >= currentSequence;
+    if (applied) {
       applyRoomSnapshot(message.room);
       game = message.game;
       ui.authorityBackup = message.authorityBackup;
     }
+    room.transport?.sendToHost({
+      type: "SYNC_ACK",
+      sequence: Math.max(incomingSequence, currentSequence)
+    });
     const pendingConfirmedBySequence = ui.pendingAction &&
       incomingSequence > ui.pendingAction.baseSequence;
     if (message.acknowledgedRequestId || pendingConfirmedBySequence) {
@@ -2654,6 +2757,14 @@ function handleNetworkMessage(message, meta = {}) {
     }
     return;
   }
+  if (message.type === "SYNC_ACK" && room.isHost) {
+    clearAckTimeout(meta.playerId);
+    const ackedSeq = Number(message.sequence);
+    if (Number.isSafeInteger(ackedSeq)) {
+      ui.lastAckedSequence.set(meta.playerId, ackedSeq);
+    }
+    return;
+  }
   if (message.type === "SYNC_STATUS") {
     scheduleStateCheck();
     return;
@@ -2727,6 +2838,14 @@ function startGame() {
 function resetToLobby() {
   game = null;
   processedGameActions.clear();
+  clearTimeout(ui.hostPeriodicTimer);
+  ui.hostPeriodicTimer = null;
+  ui.pendingAcks.forEach(entry => clearTimeout(entry.timer));
+  ui.pendingAcks.clear();
+  ui.pendingSyncMembers.clear();
+  ui.lastAckedSequence.clear();
+  clearTimeout(ui.hostResyncTimer);
+  ui.hostResyncTimer = null;
   room.lifecycle = ROOM_STATE.WAITING;
   const connected = room.members
     .filter(member => member.connected)
@@ -2743,12 +2862,16 @@ function markMemberDisconnected(memberId, voluntary = false) {
   if (!member || member.id === room.hostId) return;
   if (voluntary && (room.lifecycle === ROOM_STATE.WAITING || member.spectator)) {
     room.members = room.members.filter(item => item.id !== memberId);
+    clearAckTimeout(memberId);
+    ui.lastAckedSequence.delete(memberId);
     if (game) syncAll();
     else broadcastLobby();
     return;
   }
   member.connected = false;
   member.disconnectedAt = Date.now();
+  clearAckTimeout(memberId);
+  ui.lastAckedSequence.delete(memberId);
   const player = game?.players.find(item => item.memberId === memberId);
   if (player) {
     player.connected = false;
@@ -2910,6 +3033,10 @@ async function promoteToHost(roomSnapshot, gameBackup) {
     room.transport = transport;
     room.connected = true;
     ui.message = "";
+    ui.pendingAcks.forEach(entry => clearTimeout(entry.timer));
+    ui.pendingAcks.clear();
+    ui.pendingSyncMembers.clear();
+    ui.lastAckedSequence.clear();
     if (game) {
       const previousHost = game.players.find(player => player.memberId !== room.myId && !room.members.find(member => member.id === player.memberId)?.connected);
       if (previousHost) {
@@ -2957,7 +3084,15 @@ function leaveRoom() {
 function resetClient() {
   clearTimeout(ui.migrationTimer);
   clearTimeout(ui.syncTimer);
+  clearTimeout(ui.hostResyncTimer);
+  clearTimeout(ui.hostPeriodicTimer);
   ui.syncTimer = null;
+  ui.hostResyncTimer = null;
+  ui.hostPeriodicTimer = null;
+  ui.pendingAcks.forEach(entry => clearTimeout(entry.timer));
+  ui.pendingAcks.clear();
+  ui.pendingSyncMembers.clear();
+  ui.lastAckedSequence.clear();
   clearPendingGameAction();
   room.transport?.close();
   room.connected = false;
