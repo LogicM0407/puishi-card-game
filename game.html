@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#101316">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<title>谱师卡牌 v1.0.0</title>
+<title>谱师卡牌</title>
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -233,6 +233,7 @@
   }
   .setting-row:last-child { border-bottom: 0; }
   .setting-label span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .round-input { width: 96px; min-height: 36px; text-align: center; }
   .segment { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .segment button {
     min-width: 43px;
@@ -365,15 +366,33 @@
   .game-card.character .card-glyph { color: var(--coral); }
   .card-name { font-size: 14px; font-weight: 900; margin-bottom: 5px; }
   .card-desc { flex: 1; color: var(--muted); font-size: 11px; line-height: 1.55; }
+  .card-lore { color: var(--text); font-size: 10px; line-height: 1.5; margin-bottom: 8px; }
+  .character-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 7px;
+    margin-bottom: 8px;
+  }
+  .character-stat {
+    display: flex;
+    justify-content: space-between;
+    gap: 5px;
+    color: var(--muted);
+    font-size: 9px;
+  }
+  .character-stat b { color: var(--yellow); font-size: 9px; }
+  .card-effect { margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+  .card-effect strong { color: var(--text); }
+  .card-passive { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); color: var(--blue); font-size: 10px; line-height: 1.5; }
   .card-meta { margin-top: 8px; color: var(--yellow); font-size: 10px; line-height: 1.45; }
   .card-action { margin-top: 9px; }
   .card-action .btn { width: 100%; min-height: 33px; padding: 6px 8px; font-size: 11px; }
   .character-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(174px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 8px;
   }
-  .character-grid .game-card { width: 100%; min-height: 226px; }
+  .character-grid .game-card { width: 100%; min-height: 0; }
   .owned-mark { color: var(--green); font-size: 10px; font-weight: 800; }
   .shop-balance { color: var(--yellow); font-size: 14px; font-weight: 900; }
   .empty {
@@ -399,7 +418,12 @@
   .ability-name { font-weight: 900; font-size: 13px; }
   .ability-owner { color: var(--coral); font-size: 10px; }
   .ability-desc { min-height: 35px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+  .ability-passive { margin-top: 7px; color: var(--blue); font-size: 10px; line-height: 1.5; }
   .ability-item .btn { width: 100%; margin-top: 8px; min-height: 32px; font-size: 11px; }
+  .status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .target-btn.selected { border-color: var(--cyan); background: var(--surface-3); }
+  .vote-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .log-list { max-height: 210px; overflow-y: auto; }
   .log-entry {
     display: grid;
@@ -559,8 +583,8 @@
     .dimension-value { font-size: 22px; }
     .section { padding: 13px 0; }
     .game-card { flex-basis: 150px; min-height: 205px; }
-    .character-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-    .character-grid .game-card { min-width: 0; min-height: 238px; padding: 9px; }
+    .character-grid { grid-template-columns: 1fr; gap: 6px; }
+    .character-grid .game-card { min-width: 0; padding: 9px; }
     .character-grid .card-name { font-size: 12px; }
     .character-grid .card-desc { font-size: 10px; }
     .ability-grid { grid-template-columns: 1fr; }
@@ -570,7 +594,6 @@
   }
   @media (max-width: 360px) {
     .app { padding: 7px; }
-    .character-grid { grid-template-columns: 1fr; }
     .dimension-panel { grid-template-columns: repeat(2, 1fr); }
     .join-row { grid-template-columns: 1fr; }
   }
@@ -585,12 +608,13 @@
 const VERSION = "v1.0.0";
 const ROOM_STATE = Object.freeze({
   WAITING: "WAITING",
-  COUNTDOWN: "COUNTDOWN",
   PLAYING: "PLAYING",
   SETTLEMENT: "SETTLEMENT"
 });
 const GAME_PHASE = Object.freeze({ DRAFT: "DRAFT", TURN: "TURN", SETTLEMENT: "SETTLEMENT" });
 const DIMENSIONS = ["selection", "config", "abstract", "concrete", "innovation"];
+const CHANGEABLE_DIMENSIONS = DIMENSIONS.filter(dimension => dimension !== "selection");
+const CHARACTER_STATS = ["config", "abstract", "concrete", "innovation", "selection", "stamina"];
 const DIMENSION_LABELS = Object.freeze({
   selection: "选曲品味",
   config: "配置水平",
@@ -598,14 +622,21 @@ const DIMENSION_LABELS = Object.freeze({
   concrete: "具象动效",
   innovation: "创新程度"
 });
-const RULE_PRIORITY = Object.freeze([
-  "结算与房间状态限制",
-  "事件牌立即结算且不进入手牌",
-  "第1轮强制发动角色技能",
-  "临时技能禁用",
-  "角色技能冷却",
-  "普通卡牌效果"
-]);
+const CHARACTER_STAT_LABELS = Object.freeze({
+  config: "配置能力",
+  abstract: "抽象表演",
+  concrete: "具象表演",
+  innovation: "创新能力",
+  selection: "选曲品味",
+  stamina: "爆肝程度"
+});
+const SCORE_WEIGHTS = Object.freeze({
+  selection: .05,
+  config: .4,
+  abstract: .2,
+  concrete: .2,
+  innovation: .15
+});
 const RARITY = Object.freeze({
   S: { label: "S", price: 6 },
   "A+": { label: "A+", price: 5 },
@@ -617,56 +648,205 @@ const RARITY = Object.freeze({
 
 const CHARACTERS = Object.freeze([
   {
-    id: "ftayo", name: "Ftayo", rarity: "S", selection: 10, cooldown: 3, glyph: "crown",
-    ability: "升格", description: "将自己当前最低的一个维度提升至全场该维度最高值。"
+    id: "ftayo", name: "Ftayo", rarity: "S", glyph: "crown",
+    stats: { config: 8, abstract: 10, concrete: 10, innovation: 10, selection: 10, stamina: 11 },
+    lore: "随着Bigsong的发布，Ftayo已经Ascension to Heaven，成为当之无愧的六边形战神。不俗的配置水平，恐怖的动效成熟度与……",
+    abilities: [{
+      id: "ftayo-main", cooldown: 5, choice: "three-dimensions", maxUses: 3,
+      description: "每5回合可以发动1次，选择自己谱面中的任意3个维度提升至全场最高的数值。最多发动3次，且只能在回合数不超过总回合数70%时发动。"
+    }],
+    passive: "每次维度超过场上的某个对手时，使随机一名对手随机维度值-2；每次维度值被某个对手超过时，抽1张牌。"
   },
   {
-    id: "summercube", name: "Summercube", rarity: "A+", selection: 8, cooldown: 2, glyph: "boxes",
-    ability: "配置转具象", description: "配置水平-1，具象动效+5；配置水平可因此降为负数。"
+    id: "summercube", name: "Summercube", rarity: "A+", glyph: "boxes",
+    stats: { config: 5, abstract: 9, concrete: 11, innovation: 8, selection: 8, stamina: 10 },
+    lore: "不停地鹿！Summercube发动奇思妙想，让🦌进入了欧面，打破了单调无趣的演出后面忘了。",
+    abilities: [{
+      id: "summercube-main", cooldown: 3,
+      description: "每3回合可以发动1次，将1点配置水平兑换为5点具象动效水平。"
+    }],
+    passive: "动效水平无提升上限。每提高15点动效水平，配置水平提升3点。"
   },
   {
-    id: "sulfur", name: "SulfurDXD", rarity: "A+", selection: 8, cooldown: 2, glyph: "split",
-    ability: "动效分配", description: "选择抽象动效或具象动效，使该维度+4。", choice: "motion"
+    id: "sulfur", name: "SulfurDXD", rarity: "A+", glyph: "split",
+    stats: { config: 7, abstract: 10, concrete: 10, innovation: 8, selection: 6, stamina: 10 },
+    lore: "救救我艾琳啊啊啊啊啊啊啊",
+    abilities: [{
+      id: "sulfur-main", cooldown: 3, choice: "motion-distribution",
+      description: "每3回合可以发动1次，将5个点数自行分配到具象动效水平或抽象动效水平。"
+    }],
+    passive: "动效水平的综合分换算占比+15%。"
   },
   {
-    id: "jinye", name: "金叶", rarity: "A", selection: 6, cooldown: 1, glyph: "sparkles",
-    ability: "Testify", description: "80%概率抽象动效+4；20%概率抽象动效-2。"
+    id: "jinye", name: "金叶", rarity: "A", glyph: "sparkles",
+    stats: { config: 7, abstract: 9, concrete: 7, innovation: 6, selection: 6, stamina: 8 },
+    lore: "Xxxxxxxxxxxxxxxxxxx",
+    abilities: [{
+      id: "jinye-main", cooldown: 2,
+      description: "每2回合可以发动1次，将抽象动效水平提升5点；有20%概率触发Testify AT17，此时抽象动效水平降低2点。"
+    }],
+    passive: "限2次，场上有玩家的能力值降低时，抽1张牌；自己的回合开始时计数重置。"
   },
   {
-    id: "ruishi", name: "瑞矢级别大", rarity: "A", selection: 8, cooldown: 2, glyph: "arrow-up-wide-narrow",
-    ability: "补短板", description: "配置水平和抽象动效各自提升至自身当前最高维度值。"
+    id: "ruishi", name: "瑞矢级别大", rarity: "A", glyph: "arrow-up-wide-narrow",
+    stats: { config: 10, abstract: 9, concrete: 5, innovation: 5, selection: 8, stamina: 8 },
+    lore: "温暖的小窝",
+    abilities: [{
+      id: "ruishi-main", cooldown: 2,
+      description: "每2回合可以发动1次，将抽象表演水平与配置水平提升至自己谱面中点数最高的一项；与樱桃喝酒人同时获得时，每次发动技能可额外为每个维度增加1点。"
+    }],
+    passive: "自身使其他玩家维度值增长时，声望+1。"
   },
   {
-    id: "air", name: "Air", rarity: "B+", selection: 7, cooldown: 1, glyph: "wind",
-    ability: "新鲜空气", description: "创新程度+3，声望+1。"
+    id: "cherry", name: "樱桃喝酒人", rarity: "A", glyph: "wine",
+    stats: { config: 10, abstract: 9, concrete: 5, innovation: 5, selection: 8, stamina: 8 },
+    lore: "国际玩笑掌握者",
+    abilities: [{
+      id: "cherry-main", cooldown: 2,
+      description: "每2回合可以发动1次，将抽象表演水平与配置水平提升2点；与瑞矢级别大同时获得时，每次发动技能可额外为每个维度增加1点。"
+    }],
+    passive: "不受到任何事件牌效果影响，不会抽到事件牌。"
   },
   {
-    id: "kuro", name: "Kuro", rarity: "B", selection: 5, cooldown: 1, glyph: "sliders-horizontal",
-    ability: "精细校准", description: "配置水平+2，具象动效+1。"
+    id: "naogui", name: "恼鬼", rarity: "A", glyph: "laugh",
+    stats: { config: 10, abstract: 8, concrete: 4, innovation: 6, selection: 9, stamina: 7 },
+    lore: "线上保持着高冷人设的搞笑男，WJC辛勤工作的staff之一",
+    abilities: [{
+      id: "naogui-main", cooldown: 3,
+      description: "每3回合可以发动1次，使配置水平提升3点。"
+    }],
+    passive: "每回合1次，自己的能力值提升时，抽2张牌。"
   },
   {
-    id: "dagezi", name: "大鸽子喵喵喵", rarity: "C", selection: 3, cooldown: 0, glyph: "message-circle-more",
-    ability: "评议之灵", description: "所有维度降至自身最低值，声望+2。"
+    id: "two-three-eight", name: "238", rarity: "A", glyph: "badge-8",
+    stats: { config: 8, abstract: 9, concrete: 7, innovation: 7, selection: 10, stamina: 6 },
+    lore: "他创造了圈内第一名梗",
+    abilities: [{
+      id: "two-three-eight-main", cooldown: 3,
+      description: "每3回合可以发动1次，使抽象表演水平提升3点；同时拥有Ftayo时，改为每2回合发动1次。"
+    }],
+    passive: "每回合限5次，通过非打出的方式失去1张牌时，随机维度+4。抽到“人帅jb大”时，获得双倍的“吊”“帅”。"
+  },
+  {
+    id: "tokyo", name: "地道东京爷", rarity: "A", glyph: "landmark",
+    stats: { config: 10, abstract: 6, concrete: 4, innovation: 6, selection: 8, stamina: 6 },
+    lore: "",
+    abilities: [{
+      id: "tokyo-main", cooldown: 3,
+      description: "每3回合发动1次，使配置水平提升4点。场上存在加拿大鹅时，该效果减半。"
+    }],
+    passive: "每当自己的配置能力试图被减少时，免疫该效果，并使效果来源的对手直到自己的下个回合开始时不能发动技能。"
+  },
+  {
+    id: "furry", name: "福瑞王", rarity: "B+", glyph: "rabbit",
+    stats: { config: 7, abstract: 7, concrete: 5, innovation: 8, selection: 6, stamina: 8 },
+    lore: "Xxxxxxxxxxxxxxxxxx",
+    abilities: [{
+      id: "furry-main", cooldown: 1,
+      description: "每1回合有70%的概率额外抽取1张牌，30%的概率触发“创新”：创新程度+2，其余点数-1。"
+    }],
+    passive: "创新能力增加时，抽1张牌。"
+  },
+  {
+    id: "canada-goose", name: "加拿大鹅", rarity: "B+", glyph: "feather",
+    stats: { config: 7, abstract: 5, concrete: 4, innovation: 5, selection: 6, stamina: 5 },
+    lore: "我操。",
+    abilities: [
+      {
+        id: "canada-wjc", cooldown: 6,
+        description: "每6回合可以发动1次WJC，使场上其他玩家的非加拿大鹅角色卡在下一回合无法发动技能。"
+      },
+      {
+        id: "canada-shift", cooldown: 3, choice: "up-to-two-targets",
+        description: "每3回合选择至多2名玩家，使其谱面随机维度-1，并使加拿大鹅的谱面随机维度+2。"
+      }
+    ],
+    passive: "每当事件牌发动时，自己的随机1个维度+8。"
+  },
+  {
+    id: "disinfectant", name: "消毒水", rarity: "B+", glyph: "flask-conical",
+    stats: { config: 8, abstract: 8, concrete: 4, innovation: 7, selection: 7, stamina: 5 },
+    lore: "我就是喜欢AT17",
+    abilities: [{
+      id: "disinfectant-main", cooldown: 1,
+      description: "每1回合可以发动1次“魅惑”，使场上随机[玩家人数/3]张卡牌下一回合无法发动技能。"
+    }],
+    passive: "每当自己累计提升15点能力值，抽2张牌。"
+  },
+  {
+    id: "ziwei", name: "子微中", rarity: "B+", glyph: "flower-2",
+    stats: { config: 7, abstract: 7, concrete: 4, innovation: 6, selection: 7, stamina: 7 },
+    lore: "小芳好可爱",
+    abilities: [{
+      id: "ziwei-main", cooldown: 3,
+      description: "每3回合可以发动1次，80%概率在随机维度上提升3点，20%概率触发“子微”，技能发动失败。"
+    }],
+    passive: "每回合内打出第3张牌时，抽1张牌。每条维度限1次：自己的维度成为全场最高时，抽2张牌，随机维度+8。"
+  },
+  {
+    id: "chi-mahu", name: "吃马虎", rarity: "B", glyph: "repeat-2",
+    stats: { config: 7, abstract: 6, concrete: 4, innovation: 8, selection: 6, stamina: 5 },
+    lore: "醋比饺子多的边缘谱师，有着不俗的配置能力。被恼鬼拉黑了。",
+    abilities: [{
+      id: "chi-mahu-main", cooldown: 1, choice: "opponent",
+      description: "每回合的出牌阶段，可以声望为代价指定1名玩家交换全部手牌；首次消耗1点，每次发动后下一次代价翻倍。"
+    }],
+    passive: "配置水平的提升值-50%（向下取整）。配置能力每提升8点，所有维度+5。"
+  },
+  {
+    id: "dagezi", name: "大鸽子喵喵喵", rarity: "C", glyph: "message-circle-more",
+    stats: { config: 4, abstract: 4, concrete: 4, innovation: 4, selection: 4, stamina: 4 },
+    lore: "简单的六维评分已经无法形容此人的伟大。",
+    abilities: [{
+      id: "dagezi-main", cooldown: 1,
+      description: "每回合可以发动1次，使谱面所有评价维度降至当前最低值，并获得1点声望，声望最多由此达到15点。"
+    }],
+    passive: "最终结算时，自己的综合分每低于前一名3分，使随机1名对手的综合分-2。"
+  },
+  {
+    id: "hotwind", name: "热风小西八", rarity: "C", glyph: "flame",
+    stats: { config: 2, abstract: 5, concrete: 3, innovation: 4, selection: 5, stamina: 5 },
+    lore: "我遭到了有组织有预谋的攻击。",
+    abilities: [{
+      id: "hotwind-main", cooldown: 1,
+      description: "每回合可以发动1次，以1点声望为代价，使所有带有“评议”身份的玩家抽象动效水平-2。"
+    }],
+    passive: "每当配置水平累计提升5点，获得1点声望。"
   }
 ]);
 
 const SKILL_CARDS = Object.freeze([
-  { id: "polish", name: "精修配置", timing: "turn", target: "self", copies: 6, glyph: "sliders-horizontal", description: "自己的配置水平+3。" },
-  { id: "inspire", name: "灵感迸发", timing: "turn", target: "self", copies: 6, glyph: "lightbulb", description: "自己的创新程度+3。" },
-  { id: "motion", name: "动效协作", timing: "turn", target: "motion", copies: 5, glyph: "wand-sparkles", description: "选择抽象动效或具象动效，使其+2。" },
-  { id: "critique", name: "风格质疑", timing: "turn", target: "opponent", copies: 5, glyph: "message-square-warning", description: "指定对手的选曲品味-2。" },
-  { id: "mute", name: "饮水", timing: "turn", target: "opponent", copies: 4, glyph: "circle-off", description: "指定对手下一个回合不能发动角色技能。" },
-  { id: "reputation", name: "联合宣传", timing: "turn", target: "any", copies: 4, glyph: "megaphone", description: "指定玩家的声望+2。" },
-  { id: "quickfix", name: "即时校准", timing: "response", target: "self", copies: 4, glyph: "zap", description: "可在他人回合打出，自己的配置水平+1。" },
-  { id: "overtime", name: "爆肝加班", timing: "turn", target: "self", copies: 3, glyph: "clock-plus", description: "自己的创新程度+1，并获得1个额外回合。" }
+  {
+    id: "review", name: "评议", target: "self", glyph: "tickets",
+    description: "你成为评议两回合。每一回合你可指定一名玩家送出绿票/红票。若送出红票，该玩家的谱面配置水平提高十点，但连续三回合不可发动技能。若送出绿票，该玩家可以在下回合额外摸一张牌。"
+  },
+  {
+    id: "commission", name: "约稿", target: "self", glyph: "file-signature",
+    description: "你的谱面成为约稿。你的谱面选曲点数变为场内所有选曲点数的平均数，你额外获得一张技能牌。但你的谱面点数在[剩余回合数*0.7]回合后锁定，不再发生任何变化。"
+  },
+  {
+    id: "drink", name: "饮水", target: "opponent", glyph: "circle-off",
+    description: "你可以指定一名成员使他的zpq崩溃，他在下一回合不可发动技能。"
+  },
+  {
+    id: "fge", name: "F鸽", target: "self", glyph: "panel-top",
+    description: "你的谱面成为“故事板”谱面。在分数结算时，你的谱面获得五点分数加成。"
+  }
 ]);
 
 const EVENT_CARDS = Object.freeze([
-  { id: "trending", name: "风向突变", copies: 2, glyph: "shuffle", description: "随机一个维度随机+2或-2。" },
-  { id: "editor", name: "编辑推荐", copies: 2, glyph: "badge-check", description: "当前最低维度+3。" },
-  { id: "mute-wave", name: "集体失声", copies: 2, glyph: "mic-off", description: "当前玩家本回合不能发动角色技能。" },
-  { id: "deadline", name: "死线返工", copies: 2, glyph: "timer-off", description: "当前最高维度-2。" },
-  { id: "meeting", name: "线下面基", copies: 2, glyph: "users", description: "所有五维数据+1。" }
+  {
+    id: "meeting", name: "面基", glyph: "users",
+    description: "你的三个谱师面基了！80%概率下，谱师的交流更加深入，你的谱面所有维度内容提高一点。20%下三个谱师会开始谈恋爱，此时你三回合无法发动角色牌技能。"
+  },
+  {
+    id: "recruit", name: "招安", glyph: "badge-check",
+    description: "不幸地，你手里综合水平最强的谱师被官方招安了。你的谱面获得五点“声誉”加成，但被招安的角色牌此后无法发动任何技能。"
+  },
+  {
+    id: "retire", name: "退坑", glyph: "lock-keyhole",
+    description: "你的现实生活太繁忙了，决定退坑臀自制。你的所有点数在此刻定格。"
+  }
 ]);
 
 const app = document.getElementById("app");
@@ -686,8 +866,6 @@ const ui = {
   rulesOpen: false,
   pendingRequest: false,
   joinResolver: null,
-  countdownStartTimer: null,
-  countdownPaintTimer: null,
   migrationTimer: null,
   hostLostAt: 0,
   authorityBackup: null
@@ -701,9 +879,8 @@ const room = {
   hostId: "",
   isHost: false,
   lifecycle: ROOM_STATE.WAITING,
-  settings: { totalRounds: 10, maxPlayers: 8 },
+  settings: { totalRounds: 10 },
   members: [],
-  countdownEndsAt: 0,
   transport: null
 };
 
@@ -743,8 +920,20 @@ function shuffle(items) {
   return items;
 }
 
+function roundScore(value) {
+  return Math.round(value * 100) / 100;
+}
+
 function totalScore(player) {
-  return DIMENSIONS.reduce((sum, dim) => sum + player.scores[dim], 0) + player.reputation;
+  if (player.frozen && player.frozenScore != null) return player.frozenScore;
+  let score = DIMENSIONS.reduce((sum, dim) => sum + player.scores[dim] * SCORE_WEIGHTS[dim], 0);
+  if (ownsCharacter(player, "sulfur")) {
+    score += (player.scores.abstract + player.scores.concrete) * .075;
+  }
+  score += player.reputation;
+  if (player.storyboard) score += 5;
+  score += player.settlementPenalty || 0;
+  return roundScore(score);
 }
 
 function roomPlayers() {
@@ -793,24 +982,19 @@ function appendLog(text, type = "normal") {
 }
 
 function createDeck() {
-  const deck = [];
-  SKILL_CARDS.forEach(card => {
-    for (let i = 0; i < card.copies; i++) {
-      deck.push({ type: "skill", cardId: card.id, uid: `s_${cryptoRandom(8)}` });
-    }
-  });
-  EVENT_CARDS.forEach(card => {
-    for (let i = 0; i < card.copies; i++) {
-      deck.push({ type: "event", cardId: card.id, uid: `e_${cryptoRandom(8)}` });
-    }
-  });
-  return shuffle(deck);
+  return shuffle([
+    ...SKILL_CARDS.map(card => createCard("skill", card.id)),
+    ...EVENT_CARDS.map(card => createCard("event", card.id))
+  ]);
+}
+
+function createCard(type, cardId) {
+  return { type, cardId, uid: `${type === "skill" ? "s" : "e"}_${cryptoRandom(8)}` };
 }
 
 function createGameState(members, totalRounds) {
   const activeMembers = members.filter(member => !member.spectator && member.connected);
   return {
-    version: VERSION,
     phase: GAME_PHASE.DRAFT,
     totalRounds,
     round: 0,
@@ -819,8 +1003,7 @@ function createGameState(members, totalRounds) {
     turn: {
       hasDrawn: false,
       skillCardsPlayed: 0,
-      characterSkillUsed: false,
-      usedCharacterIds: [],
+      usedAbilityIds: [],
       number: 0
     },
     players: activeMembers.map(member => ({
@@ -832,18 +1015,39 @@ function createGameState(members, totalRounds) {
       funds: 12,
       scores: { selection: 0, config: 0, abstract: 0, concrete: 0, innovation: 0 },
       reputation: 0,
-      disableSkillTurns: 0,
-      extraTurns: 0,
+      disableCharacterTurns: 0,
+      disableAllSkillTurns: 0,
+      disableUntilOwnTurn: false,
       firstRoundSkillUsed: false,
+      storyboard: false,
+      frozen: false,
+      frozenScore: null,
+      commissionLocked: false,
+      commissionLockAtRound: null,
+      reviewTurns: 0,
+      reviewActionUsed: false,
+      extraDrawNextTurn: 0,
+      handExchangeCost: 1,
+      settlementPenalty: 0,
+      counters: {
+        summercubeMotion: 0,
+        jinyeDraws: 0,
+        naoguiTriggered: false,
+        disinfectantGain: 0,
+        chiMahuConfig: 0,
+        hotwindConfig: 0,
+        twoThreeEightLoss: 0,
+        ziweiHighest: {}
+      },
       connected: true,
-      disconnectedAt: 0,
-      aiControlled: false
+      disconnectedAt: 0
     })),
     deck: createDeck(),
     discard: [],
     log: [],
     ranking: [],
     sequence: 0,
+    effectDepth: 0,
     createdAt: Date.now()
   };
 }
@@ -866,47 +1070,260 @@ function refillDeckIfNeeded() {
   appendLog("抽牌堆已空，弃牌堆重新洗入抽牌堆。", "event");
 }
 
-function changeScore(player, dimension, amount) {
+function ownsCharacter(player, characterId) {
+  return Boolean(player?.characters.some(instance => instance.id === characterId && !instance.permanentlyDisabled));
+}
+
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function randomDimension(includeSelection = false) {
+  return randomItem(includeSelection ? DIMENSIONS : CHANGEABLE_DIMENSIONS);
+}
+
+function characterSelection(character) {
+  return character.stats.selection;
+}
+
+function gainReputation(playerIndex, amount, options = {}) {
+  const player = game.players[playerIndex];
+  if (!player || player.frozen || !amount) return 0;
+  const before = player.reputation;
+  if (options.cap != null && amount > 0) {
+    player.reputation = player.reputation >= options.cap
+      ? player.reputation
+      : Math.min(options.cap, player.reputation + amount);
+  } else {
+    player.reputation += amount;
+  }
+  return player.reputation - before;
+}
+
+function applyScoreChange(playerIndex, dimension, requestedAmount, context = {}) {
+  const player = game.players[playerIndex];
+  if (!player || !DIMENSIONS.includes(dimension) || !requestedAmount || player.frozen || player.commissionLocked) return 0;
+  if (dimension === "selection" && player.firstRoundSkillUsed && !context.allowSelectionChange) return 0;
+  if (game.effectDepth > 40) return 0;
+
+  let amount = requestedAmount;
+  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
+    amount = Math.floor(amount * .5);
+  }
+  if (amount < 0 && dimension === "config" && ownsCharacter(player, "tokyo")) {
+    const source = game.players[context.sourcePlayerIndex];
+    if (source && source.memberId !== player.memberId) source.disableUntilOwnTurn = true;
+    appendLog(`${player.name} 的配置水平减少被“地道东京爷”免疫。`, "effect");
+    return 0;
+  }
+  if (!amount) return 0;
+
+  const beforeAll = game.players.map(candidate => candidate.scores[dimension]);
   player.scores[dimension] += amount;
+  game.effectDepth++;
+  runScorePassives(playerIndex, dimension, amount, beforeAll, context);
+  game.effectDepth--;
+  return amount;
+}
+
+function setScore(playerIndex, dimension, value, context = {}) {
+  const player = game.players[playerIndex];
+  if (!player) return 0;
+  return applyScoreChange(playerIndex, dimension, value - player.scores[dimension], context);
+}
+
+function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
+  const player = game.players[playerIndex];
+  const sourceIndex = Number.isInteger(context.sourcePlayerIndex) ? context.sourcePlayerIndex : playerIndex;
+  const source = game.players[sourceIndex];
+
+  if (amount < 0) {
+    game.players.forEach((owner, ownerIndex) => {
+      if (ownsCharacter(owner, "jinye") && owner.counters.jinyeDraws < 2) {
+        owner.counters.jinyeDraws++;
+        drawCards(ownerIndex, 1);
+        appendLog(`${owner.name} 因场上能力值降低抽1张牌。`, "effect");
+      }
+    });
+  }
+
+  if (amount > 0 && source && sourceIndex !== playerIndex && ownsCharacter(source, "ruishi")) {
+    gainReputation(sourceIndex, 1);
+    appendLog(`${source.name} 因使其他玩家维度增长获得1点声望。`, "effect");
+  }
+
+  if (amount > 0 && (dimension === "abstract" || dimension === "concrete") && ownsCharacter(player, "summercube")) {
+    player.counters.summercubeMotion += amount;
+    while (player.counters.summercubeMotion >= 15) {
+      player.counters.summercubeMotion -= 15;
+      applyScoreChange(playerIndex, "config", 3, { sourcePlayerIndex: playerIndex, skipCrossing: true });
+      appendLog(`${player.name} 累计提高15点动效，配置水平+3。`, "effect");
+    }
+  }
+
+  if (amount > 0 && ownsCharacter(player, "naogui") && !player.counters.naoguiTriggered) {
+    player.counters.naoguiTriggered = true;
+    drawCards(playerIndex, 2);
+    appendLog(`${player.name} 因能力值提升抽2张牌。`, "effect");
+  }
+
+  if (amount > 0 && dimension === "innovation" && ownsCharacter(player, "furry")) {
+    drawCards(playerIndex, 1);
+    appendLog(`${player.name} 因创新能力增加抽1张牌。`, "effect");
+  }
+
+  if (amount > 0 && ownsCharacter(player, "disinfectant")) {
+    player.counters.disinfectantGain += amount;
+    while (player.counters.disinfectantGain >= 15) {
+      player.counters.disinfectantGain -= 15;
+      drawCards(playerIndex, 2);
+      appendLog(`${player.name} 累计提升15点能力值，抽2张牌。`, "effect");
+    }
+  }
+
+  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
+    player.counters.chiMahuConfig += amount;
+    while (player.counters.chiMahuConfig >= 8) {
+      player.counters.chiMahuConfig -= 8;
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 5, {
+        sourcePlayerIndex: playerIndex,
+        skipCrossing: true
+      }));
+      appendLog(`${player.name} 累计提升8点配置能力，所有维度+5。`, "effect");
+    }
+  }
+
+  if (amount > 0 && dimension === "config" && ownsCharacter(player, "hotwind")) {
+    player.counters.hotwindConfig += amount;
+    while (player.counters.hotwindConfig >= 5) {
+      player.counters.hotwindConfig -= 5;
+      gainReputation(playerIndex, 1);
+      appendLog(`${player.name} 累计提升5点配置水平，获得1点声望。`, "effect");
+    }
+  }
+
+  if (!context.skipCrossing) runCrossingPassives(playerIndex, dimension, beforeAll);
+}
+
+function runCrossingPassives(playerIndex, dimension, beforeAll) {
+  const player = game.players[playerIndex];
+  const afterValue = player.scores[dimension];
+
+  if (ownsCharacter(player, "ftayo")) {
+    game.players.forEach((opponent, opponentIndex) => {
+      if (opponentIndex === playerIndex) return;
+      if (beforeAll[playerIndex] <= beforeAll[opponentIndex] && afterValue > opponent.scores[dimension]) {
+        const targetIndex = randomItem(game.players.map((_, index) => index).filter(index => index !== playerIndex));
+        const targetDimension = randomDimension();
+        applyScoreChange(targetIndex, targetDimension, -2, { sourcePlayerIndex: playerIndex, skipCrossing: true });
+        appendLog(`${player.name} 的维度超过对手，随机对手的${DIMENSION_LABELS[targetDimension]}-2。`, "effect");
+      }
+    });
+  }
+
+  game.players.forEach((ftayoOwner, ownerIndex) => {
+    if (ownerIndex === playerIndex || !ownsCharacter(ftayoOwner, "ftayo")) return;
+    if (beforeAll[playerIndex] <= beforeAll[ownerIndex] && afterValue > ftayoOwner.scores[dimension]) {
+      drawCards(ownerIndex, 1);
+      appendLog(`${ftayoOwner.name} 的维度被对手超过，抽1张牌。`, "effect");
+    }
+  });
+
+  if (ownsCharacter(player, "ziwei") && !player.counters.ziweiHighest[dimension]) {
+    const wasHighest = beforeAll.every((value, index) => index === playerIndex || beforeAll[playerIndex] > value);
+    const isHighest = game.players.every((candidate, index) => index === playerIndex || afterValue >= candidate.scores[dimension]);
+    if (!wasHighest && isHighest) {
+      player.counters.ziweiHighest[dimension] = true;
+      drawCards(playerIndex, 2);
+      const bonusDimension = randomDimension();
+      applyScoreChange(playerIndex, bonusDimension, 8, { sourcePlayerIndex: playerIndex });
+      appendLog(`${player.name} 的${DIMENSION_LABELS[dimension]}成为全场最高，抽2张牌且随机维度+8。`, "effect");
+    }
+  }
 }
 
 function resolveEvent(playerIndex, card) {
   const player = game.players[playerIndex];
   const event = eventDefinition(card.cardId);
   if (!player || !event) return;
-  if (event.id === "trending") {
-    const dimension = DIMENSIONS[Math.floor(Math.random() * DIMENSIONS.length)];
-    const amount = Math.random() < .5 ? -2 : 2;
-    changeScore(player, dimension, amount);
-    appendLog(`${player.name} 触发「${event.name}」：${DIMENSION_LABELS[dimension]}${amount > 0 ? "+" : ""}${amount}。`, "event");
-  } else if (event.id === "editor") {
-    const minValue = Math.min(...DIMENSIONS.map(dim => player.scores[dim]));
-    const candidates = DIMENSIONS.filter(dim => player.scores[dim] === minValue);
-    const dimension = candidates[Math.floor(Math.random() * candidates.length)];
-    changeScore(player, dimension, 3);
-    appendLog(`${player.name} 触发「${event.name}」：最低项${DIMENSION_LABELS[dimension]}+3。`, "event");
-  } else if (event.id === "mute-wave") {
-    player.disableSkillTurns = Math.max(player.disableSkillTurns, 1);
-    appendLog(`${player.name} 触发「${event.name}」：本回合角色技能被禁用。`, "event");
-  } else if (event.id === "deadline") {
-    const maxValue = Math.max(...DIMENSIONS.map(dim => player.scores[dim]));
-    const candidates = DIMENSIONS.filter(dim => player.scores[dim] === maxValue);
-    const dimension = candidates[Math.floor(Math.random() * candidates.length)];
-    changeScore(player, dimension, -2);
-    appendLog(`${player.name} 触发「${event.name}」：最高项${DIMENSION_LABELS[dimension]}-2。`, "event");
+
+  if (ownsCharacter(player, "cherry")) {
+    appendLog(`${player.name} 的“樱桃喝酒人”使事件牌「${event.name}」不产生效果。`, "event");
   } else if (event.id === "meeting") {
-    DIMENSIONS.forEach(dim => changeScore(player, dim, 1));
-    appendLog(`${player.name} 触发「${event.name}」：五维数据全部+1。`, "event");
+    if (Math.random() < .8) {
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 1, {
+        sourcePlayerIndex: playerIndex,
+        allowSelectionChange: true
+      }));
+      appendLog(`${player.name} 触发「面基」：所有维度+1。`, "event");
+    } else {
+      player.disableCharacterTurns = Math.max(player.disableCharacterTurns, 3);
+      appendLog(`${player.name} 触发「面基」：3回合无法发动角色牌技能。`, "event");
+    }
+  } else if (event.id === "recruit") {
+    const available = player.characters.filter(instance => !instance.permanentlyDisabled);
+    if (available.length) {
+      const strongest = available
+        .map(instance => ({ instance, value: CHARACTER_STATS.reduce((sum, stat) => sum + characterDefinition(instance.id).stats[stat], 0) }))
+        .sort((a, b) => b.value - a.value)[0].instance;
+      strongest.permanentlyDisabled = true;
+      gainReputation(playerIndex, 5);
+      appendLog(`${player.name} 触发「招安」：${characterDefinition(strongest.id).name}永久失效，声望+5。`, "event");
+    } else {
+      gainReputation(playerIndex, 5);
+      appendLog(`${player.name} 触发「招安」：声望+5。`, "event");
+    }
+  } else if (event.id === "retire") {
+    player.frozenScore = totalScore(player);
+    player.frozen = true;
+    appendLog(`${player.name} 触发「退坑」：所有点数定格。`, "event");
   }
+
+  game.players.forEach((owner, ownerIndex) => {
+    if (!ownsCharacter(owner, "canada-goose")) return;
+    const dimension = randomDimension(true);
+    applyScoreChange(ownerIndex, dimension, 8, {
+      sourcePlayerIndex: ownerIndex,
+      allowSelectionChange: true
+    });
+    appendLog(`${owner.name} 因事件牌发动，${DIMENSION_LABELS[dimension]}+8。`, "effect");
+  });
+
   game.deck.push(card);
   shuffle(game.deck);
+}
+
+function drawSkillFromPool(playerIndex) {
+  const player = game.players[playerIndex];
+  if (!player) return null;
+  const definition = randomItem(SKILL_CARDS);
+  const card = createCard("skill", definition.id);
+  player.hand.push(card);
+  player.handCount = player.hand.length;
+  return card;
 }
 
 function drawCard(playerIndex) {
   refillDeckIfNeeded();
   const player = game.players[playerIndex];
+  if (!player) return { kind: "empty" };
+
+  if (ownsCharacter(player, "cherry")) {
+    const skillIndex = game.deck.map(item => item.type).lastIndexOf("skill");
+    if (skillIndex >= 0) {
+      const card = game.deck.splice(skillIndex, 1)[0];
+      player.hand.push(card);
+      player.handCount = player.hand.length;
+      appendLog(`${player.name} 摸到1张技能牌。`);
+      return { kind: "skill", name: skillDefinition(card.cardId)?.name || "技能牌" };
+    }
+    const card = drawSkillFromPool(playerIndex);
+    appendLog(`${player.name} 摸到1张技能牌。`);
+    return { kind: "skill", name: skillDefinition(card.cardId)?.name || "技能牌" };
+  }
+
   const card = game.deck.pop();
-  if (!player || !card) {
+  if (!card) {
     appendLog("牌堆和弃牌堆均为空，本次未摸到牌。", "event");
     return { kind: "empty" };
   }
@@ -918,25 +1335,59 @@ function drawCard(playerIndex) {
   player.hand.push(card);
   player.handCount = player.hand.length;
   const skill = skillDefinition(card.cardId);
-  appendLog(`${player.name} 摸到技能牌「${skill.name}」。`);
+  appendLog(`${player.name} 摸到1张技能牌。`);
   return { kind: "skill", name: skill.name };
+}
+
+function drawCards(playerIndex, count, skillOnly = false) {
+  const results = [];
+  for (let i = 0; i < count; i++) {
+    if (skillOnly) {
+      const card = drawSkillFromPool(playerIndex);
+      results.push(card ? { kind: "skill", name: skillDefinition(card.cardId)?.name } : { kind: "empty" });
+    } else {
+      results.push(drawCard(playerIndex));
+    }
+  }
+  return results;
+}
+
+function dealInitialHands() {
+  game.players.forEach((player, playerIndex) => {
+    drawCards(playerIndex, 5, true);
+    appendLog(`${player.name} 从技能卡池抽取5张技能牌。`);
+  });
 }
 
 function beginTurn() {
   const player = currentPlayer();
   if (!player) return;
   player.characters.forEach(character => {
-    if (character.cooldownLeft > 0) character.cooldownLeft--;
+    Object.keys(character.cooldowns).forEach(abilityId => {
+      if (character.cooldowns[abilityId] > 0) character.cooldowns[abilityId]--;
+    });
   });
+  player.disableUntilOwnTurn = false;
+  player.reviewActionUsed = false;
+  player.counters.jinyeDraws = 0;
+  player.counters.naoguiTriggered = false;
+  player.counters.twoThreeEightLoss = 0;
+  if (player.commissionLockAtRound != null && game.round >= player.commissionLockAtRound) {
+    player.commissionLocked = true;
+  }
   game.turn = {
     hasDrawn: false,
     skillCardsPlayed: 0,
-    characterSkillUsed: false,
-    usedCharacterIds: [],
+    usedAbilityIds: [],
     number: game.turn.number + 1
   };
   appendLog(`轮到 ${player.name} 行动。`);
-  scheduleAIIfNeeded();
+  if (player.extraDrawNextTurn > 0) {
+    const count = player.extraDrawNextTurn;
+    player.extraDrawNextTurn = 0;
+    drawCards(game.currentPlayerIndex, count);
+    appendLog(`${player.name} 额外摸${count}张牌。`, "effect");
+  }
 }
 
 function buyCharacter(playerIndex, characterId) {
@@ -947,7 +1398,20 @@ function buyCharacter(playerIndex, characterId) {
   const price = RARITY[character.rarity].price;
   if (player.funds < price) return fail("购置点数不足");
   player.funds -= price;
-  player.characters.push({ id: character.id, cooldownLeft: 0, permanentlyDisabled: false });
+  const cooldowns = {};
+  const uses = {};
+  character.abilities.forEach(ability => {
+    cooldowns[ability.id] = 0;
+    uses[ability.id] = 0;
+  });
+  player.characters.push({
+    uid: `c_${cryptoRandom(8)}`,
+    id: character.id,
+    cooldowns,
+    uses,
+    disabledTurns: 0,
+    permanentlyDisabled: false
+  });
   appendLog(`${player.name} 购置了「${character.name}」，剩余${player.funds}点。`, "effect");
   return ok();
 }
@@ -962,6 +1426,7 @@ function finishDraft(playerIndex) {
     game.phase = GAME_PHASE.TURN;
     game.round = 1;
     game.currentPlayerIndex = 0;
+    dealInitialHands();
     appendLog("购置阶段结束。第1轮开始，每位玩家必须发动1次角色技能。", "event");
     beginTurn();
   } else {
@@ -970,74 +1435,172 @@ function finishDraft(playerIndex) {
   return ok();
 }
 
-function canActivateCharacter(player, instance) {
-  if (!game.turn.hasDrawn) return fail("请先摸牌");
+function characterAbilityDefinition(characterId, abilityId) {
+  return characterDefinition(characterId)?.abilities.find(ability => ability.id === abilityId);
+}
+
+function isAllSkillBlocked(player) {
+  return player.disableAllSkillTurns > 0 || player.disableUntilOwnTurn;
+}
+
+function canActivateCharacter(player, instance, ability) {
   if (instance.permanentlyDisabled) return fail("该角色技能已永久失效");
-  if (game.turn.usedCharacterIds.includes(instance.id)) return fail("该角色本回合已经发动过技能");
+  const useKey = `${instance.uid}:${ability.id}`;
+  if (game.turn.usedAbilityIds.includes(useKey)) return fail("该技能本回合已经发动过");
   const firstRoundOverride = game.round === 1 && !player.firstRoundSkillUsed;
-  if (!firstRoundOverride && player.disableSkillTurns > 0) return fail("本回合角色技能被禁用");
-  if (instance.cooldownLeft > 0) return fail(`技能冷却剩余${instance.cooldownLeft}回合`);
+  if (!firstRoundOverride && (player.disableCharacterTurns > 0 || isAllSkillBlocked(player) || instance.disabledTurns > 0)) {
+    return fail("本回合角色技能被禁用");
+  }
+  if (instance.cooldowns[ability.id] > 0) return fail(`技能冷却剩余${instance.cooldowns[ability.id]}回合`);
+  if (ability.maxUses && instance.uses[ability.id] >= ability.maxUses) return fail("该技能已达到发动次数上限");
+  if (ability.id === "ftayo-main" && game.round > Math.floor(game.totalRounds * .7)) return fail("已超过总回合数70%");
   return ok();
 }
 
-function activateCharacter(playerIndex, characterId, payload = {}) {
+function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   const player = game.players[playerIndex];
   const instance = player.characters.find(character => character.id === characterId);
   const definition = characterDefinition(characterId);
-  if (!instance || !definition) return fail("未拥有该角色");
-  const allowed = canActivateCharacter(player, instance);
+  const ability = characterAbilityDefinition(characterId, abilityId);
+  if (!instance || !definition || !ability) return fail("未拥有该角色技能");
+  const allowed = canActivateCharacter(player, instance, ability);
   if (!allowed.ok) return allowed;
-  if (definition.id === "sulfur" && !["abstract", "concrete"].includes(payload.dimension)) {
-    return fail("请选择动效维度");
+  if (ability.choice === "three-dimensions") {
+    const choices = Array.isArray(payload.dimensions) ? [...new Set(payload.dimensions)] : [];
+    if (choices.length !== 3 || choices.some(dim => !CHANGEABLE_DIMENSIONS.includes(dim))) return fail("请选择3个不同维度");
+  }
+  if (ability.choice === "motion-distribution") {
+    const abstractPoints = Number(payload.abstractPoints);
+    if (!Number.isInteger(abstractPoints) || abstractPoints < 0 || abstractPoints > 5) return fail("请分配5个动效点数");
+  }
+  if (ability.choice === "opponent") {
+    const target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
+    if (!target || target.memberId === player.memberId) return fail("请选择1名其他玩家");
   }
 
   if (game.round === 1 && !player.firstRoundSkillUsed) {
-    player.scores.selection = definition.selection;
+    setScore(playerIndex, "selection", characterSelection(definition), {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true,
+      skipCrossing: true
+    });
     player.firstRoundSkillUsed = true;
-    appendLog(`${player.name} 以「${definition.name}」确定初始选曲品味为${definition.selection}。`, "effect");
+    appendLog(`${player.name} 以「${definition.name}」确定初始选曲品味为${characterSelection(definition)}。`, "effect");
   }
 
-  if (definition.id === "ftayo") {
-    let chosen = DIMENSIONS[0];
-    DIMENSIONS.forEach(dim => {
-      if (player.scores[dim] < player.scores[chosen]) chosen = dim;
+  if (ability.id === "ftayo-main") {
+    payload.dimensions.forEach(dimension => {
+      const highest = Math.max(...game.players.map(target => target.scores[dimension]));
+      setScore(playerIndex, dimension, highest, { sourcePlayerIndex: playerIndex });
     });
-    const highest = Math.max(...game.players.map(target => target.scores[chosen]));
-    player.scores[chosen] = highest;
-    appendLog(`${player.name} 发动「升格」：${DIMENSION_LABELS[chosen]}提升至${highest}。`, "effect");
-  } else if (definition.id === "summercube") {
-    player.scores.config--;
-    player.scores.concrete += 5;
-    appendLog(`${player.name} 发动「配置转具象」：配置-1，具象+5。`, "effect");
-  } else if (definition.id === "sulfur") {
-    player.scores[payload.dimension] += 4;
-    appendLog(`${player.name} 发动「动效分配」：${DIMENSION_LABELS[payload.dimension]}+4。`, "effect");
-  } else if (definition.id === "jinye") {
-    const amount = Math.random() < .2 ? -2 : 4;
-    player.scores.abstract += amount;
-    appendLog(`${player.name} 发动「Testify」：抽象动效${amount > 0 ? "+" : ""}${amount}。`, "effect");
-  } else if (definition.id === "ruishi") {
+    appendLog(`${player.name} 发动Ftayo技能：3个维度提升至全场最高。`, "effect");
+  } else if (ability.id === "summercube-main") {
+    applyScoreChange(playerIndex, "config", -1, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, "concrete", 5, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动Summercube技能：配置-1，具象动效+5。`, "effect");
+  } else if (ability.id === "sulfur-main") {
+    const abstractPoints = Number(payload.abstractPoints);
+    applyScoreChange(playerIndex, "abstract", abstractPoints, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, "concrete", 5 - abstractPoints, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动SulfurDXD技能：分配5点动效。`, "effect");
+  } else if (ability.id === "jinye-main") {
+    const amount = Math.random() < .2 ? -2 : 5;
+    applyScoreChange(playerIndex, "abstract", amount, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动金叶技能：抽象动效${amount > 0 ? "+" : ""}${amount}。`, "effect");
+  } else if (ability.id === "ruishi-main") {
     const highest = Math.max(...DIMENSIONS.map(dim => player.scores[dim]));
-    player.scores.config = Math.max(player.scores.config, highest);
-    player.scores.abstract = Math.max(player.scores.abstract, highest);
-    appendLog(`${player.name} 发动「补短板」：配置和抽象提升至${highest}。`, "effect");
-  } else if (definition.id === "air") {
-    player.scores.innovation += 3;
-    player.reputation += 1;
-    appendLog(`${player.name} 发动「新鲜空气」：创新+3，声望+1。`, "effect");
-  } else if (definition.id === "kuro") {
-    player.scores.config += 2;
-    player.scores.concrete += 1;
-    appendLog(`${player.name} 发动「精细校准」：配置+2，具象+1。`, "effect");
-  } else if (definition.id === "dagezi") {
+    setScore(playerIndex, "config", Math.max(player.scores.config, highest), { sourcePlayerIndex: playerIndex });
+    setScore(playerIndex, "abstract", Math.max(player.scores.abstract, highest), { sourcePlayerIndex: playerIndex });
+    if (ownsCharacter(player, "cherry")) {
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 1, { sourcePlayerIndex: playerIndex }));
+    }
+    appendLog(`${player.name} 发动瑞矢级别大技能。`, "effect");
+  } else if (ability.id === "cherry-main") {
+    applyScoreChange(playerIndex, "config", 2, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, "abstract", 2, { sourcePlayerIndex: playerIndex });
+    if (ownsCharacter(player, "ruishi")) {
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 1, { sourcePlayerIndex: playerIndex }));
+    }
+    appendLog(`${player.name} 发动樱桃喝酒人技能。`, "effect");
+  } else if (ability.id === "naogui-main") {
+    applyScoreChange(playerIndex, "config", 3, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动恼鬼技能：配置水平+3。`, "effect");
+  } else if (ability.id === "two-three-eight-main") {
+    applyScoreChange(playerIndex, "abstract", 3, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动238技能：抽象动效+3。`, "effect");
+  } else if (ability.id === "tokyo-main") {
+    const halved = game.players.some(candidate => ownsCharacter(candidate, "canada-goose"));
+    applyScoreChange(playerIndex, "config", halved ? 2 : 4, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动地道东京爷技能：配置水平+${halved ? 2 : 4}。`, "effect");
+  } else if (ability.id === "furry-main") {
+    if (Math.random() < .7) {
+      drawCards(playerIndex, 1);
+      appendLog(`${player.name} 发动福瑞王技能：额外抽1张牌。`, "effect");
+    } else {
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, dim === "innovation" ? 2 : -1, { sourcePlayerIndex: playerIndex }));
+      appendLog(`${player.name} 发动福瑞王技能并触发“创新”。`, "effect");
+    }
+  } else if (ability.id === "canada-wjc") {
+    game.players.forEach((target, targetIndex) => {
+      if (targetIndex === playerIndex) return;
+      target.characters.forEach(character => {
+        if (character.id !== "canada-goose") character.disabledTurns = Math.max(character.disabledTurns, 1);
+      });
+    });
+    appendLog(`${player.name} 发动WJC：其他玩家的非加拿大鹅角色卡下回合禁用。`, "effect");
+  } else if (ability.id === "canada-shift") {
+    const targetIds = Array.isArray(payload.targetMemberIds) ? [...new Set(payload.targetMemberIds)].slice(0, 2) : [];
+    targetIds.forEach(memberId => {
+      const targetIndex = game.players.findIndex(candidate => candidate.memberId === memberId && candidate.memberId !== player.memberId);
+      if (targetIndex >= 0) applyScoreChange(targetIndex, randomDimension(), -1, { sourcePlayerIndex: playerIndex });
+    });
+    applyScoreChange(playerIndex, randomDimension(), 2, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动加拿大鹅技能。`, "effect");
+  } else if (ability.id === "disinfectant-main") {
+    const cards = game.players.flatMap(target => target.characters).filter(character => !character.permanentlyDisabled);
+    shuffle(cards);
+    cards.slice(0, Math.floor(game.players.length / 3)).forEach(character => {
+      character.disabledTurns = Math.max(character.disabledTurns, 1);
+    });
+    appendLog(`${player.name} 发动“魅惑”。`, "effect");
+  } else if (ability.id === "ziwei-main") {
+    if (Math.random() < .8) {
+      const dimension = randomDimension();
+      applyScoreChange(playerIndex, dimension, 3, { sourcePlayerIndex: playerIndex });
+      appendLog(`${player.name} 发动子微中技能：${DIMENSION_LABELS[dimension]}+3。`, "effect");
+    } else {
+      appendLog(`${player.name} 发动子微中技能并触发“子微”，技能失败。`, "effect");
+    }
+  } else if (ability.id === "chi-mahu-main") {
+    const targetIndex = game.players.findIndex(candidate => candidate.memberId === payload.targetMemberId);
+    const target = game.players[targetIndex];
+    gainReputation(playerIndex, -player.handExchangeCost);
+    handleNonPlayCardLoss(playerIndex, player.hand.length);
+    handleNonPlayCardLoss(targetIndex, target.hand.length);
+    const ownHand = player.hand;
+    player.hand = target.hand;
+    target.hand = ownHand;
+    player.handCount = player.hand.length;
+    target.handCount = target.hand.length;
+    player.handExchangeCost *= 2;
+    appendLog(`${player.name} 与${target.name}交换全部手牌。`, "effect");
+  } else if (ability.id === "dagezi-main") {
     const lowest = Math.min(...DIMENSIONS.map(dim => player.scores[dim]));
-    DIMENSIONS.forEach(dim => { player.scores[dim] = lowest; });
-    player.reputation += 2;
-    appendLog(`${player.name} 发动「评议之灵」：五维归至${lowest}，声望+2。`, "effect");
+    DIMENSIONS.forEach(dim => setScore(playerIndex, dim, lowest, { sourcePlayerIndex: playerIndex }));
+    gainReputation(playerIndex, 1, { cap: 15 });
+    appendLog(`${player.name} 发动大鸽子喵喵喵技能：选曲品味外的维度降至${lowest}，声望+1。`, "effect");
+  } else if (ability.id === "hotwind-main") {
+    gainReputation(playerIndex, -1);
+    game.players.forEach((target, targetIndex) => {
+      if (target.reviewTurns > 0) applyScoreChange(targetIndex, "abstract", -2, { sourcePlayerIndex: playerIndex });
+    });
+    appendLog(`${player.name} 发动热风小西八技能：评议玩家抽象动效-2。`, "effect");
   }
-  instance.cooldownLeft = definition.cooldown;
-  game.turn.characterSkillUsed = true;
-  game.turn.usedCharacterIds.push(instance.id);
+
+  const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
+  instance.cooldowns[ability.id] = actualCooldown;
+  instance.uses[ability.id]++;
+  game.turn.usedAbilityIds.push(`${instance.uid}:${ability.id}`);
   return ok();
 }
 
@@ -1049,48 +1612,77 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   const definition = skillDefinition(card.cardId);
   const ownTurn = game.currentPlayerIndex === playerIndex;
   if (!definition) return fail("卡牌数据不存在");
-  if (definition.timing === "turn" && !ownTurn) return fail("该牌只能在自己的回合打出");
-  if (definition.timing === "response" && ownTurn) return fail("该牌只能在他人回合响应");
-  if (ownTurn && !game.turn.hasDrawn) return fail("请先摸牌");
-  if (ownTurn && game.turn.skillCardsPlayed >= 3) return fail("每回合最多打出3张技能牌");
+  if (!ownTurn) return fail("该牌只能在自己的回合打出");
+  if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
 
   let target = null;
-  if (definition.target === "opponent" || definition.target === "any") {
+  if (definition.target === "opponent") {
     target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
     if (!target) return fail("目标不存在");
-    if (definition.target === "opponent" && target.memberId === player.memberId) return fail("必须选择对手");
-  }
-  if (definition.target === "motion" && !["abstract", "concrete"].includes(payload.dimension)) {
-    return fail("请选择动效维度");
+    if (target.memberId === player.memberId) return fail("必须选择其他玩家");
   }
 
-  if (definition.id === "polish") player.scores.config += 3;
-  if (definition.id === "inspire") player.scores.innovation += 3;
-  if (definition.id === "motion") player.scores[payload.dimension] += 2;
-  if (definition.id === "critique") target.scores.selection -= 2;
-  if (definition.id === "mute") target.disableSkillTurns = Math.max(target.disableSkillTurns, 1);
-  if (definition.id === "reputation") target.reputation += 2;
-  if (definition.id === "quickfix") player.scores.config += 1;
-  if (definition.id === "overtime") {
-    player.scores.innovation += 1;
-    player.extraTurns += 1;
+  if (definition.id === "review") {
+    player.reviewTurns = Math.max(player.reviewTurns, 2);
+  } else if (definition.id === "commission") {
+    const average = game.players.reduce((sum, candidate) => sum + candidate.scores.selection, 0) / game.players.length;
+    setScore(playerIndex, "selection", average, {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true,
+      skipCrossing: true
+    });
+    drawCards(playerIndex, 1, true);
+    const remainingRounds = game.totalRounds - game.round + 1;
+    player.commissionLockAtRound = game.round + Math.floor(remainingRounds * .7);
+    if (player.commissionLockAtRound <= game.round) player.commissionLocked = true;
+  } else if (definition.id === "drink") {
+    target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 1);
+  } else if (definition.id === "fge") {
+    player.storyboard = true;
   }
 
-  const effectText = {
-    polish: "配置水平+3",
-    inspire: "创新程度+3",
-    motion: `${DIMENSION_LABELS[payload.dimension]}+2`,
-    critique: `${target?.name}的选曲品味-2`,
-    mute: `${target?.name}下回合禁用角色技能`,
-    reputation: `${target?.name}声望+2`,
-    quickfix: "配置水平+1",
-    overtime: "创新程度+1并获得额外回合"
-  }[definition.id];
-  appendLog(`${player.name} 打出「${definition.name}」：${effectText}。`, "effect");
+  appendLog(`${player.name} 打出「${definition.name}」。`, "effect");
   player.hand.splice(cardIndex, 1);
   player.handCount = player.hand.length;
   game.discard.push(card);
-  if (ownTurn) game.turn.skillCardsPlayed++;
+  game.turn.skillCardsPlayed++;
+  if (game.turn.skillCardsPlayed === 3 && ownsCharacter(player, "ziwei")) {
+    drawCards(playerIndex, 1);
+    appendLog(`${player.name} 在本回合打出第3张牌，抽1张牌。`, "effect");
+  }
+  return ok();
+}
+
+function handleNonPlayCardLoss(playerIndex, count) {
+  const player = game.players[playerIndex];
+  if (!player || !ownsCharacter(player, "two-three-eight") || count <= 0) return;
+  const triggers = Math.min(count, 5 - player.counters.twoThreeEightLoss);
+  for (let i = 0; i < triggers; i++) {
+    player.counters.twoThreeEightLoss++;
+    applyScoreChange(playerIndex, randomDimension(), 4, { sourcePlayerIndex: playerIndex });
+  }
+  if (triggers > 0) appendLog(`${player.name} 因非打出方式失去${triggers}张牌，随机维度获得加成。`, "effect");
+}
+
+function executeReviewVote(playerIndex, payload = {}) {
+  const player = game.players[playerIndex];
+  if (player.reviewTurns <= 0) return fail("当前没有评议身份");
+  if (player.reviewActionUsed) return fail("本回合已经进行过评议");
+  if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
+  const targetIndex = game.players.findIndex(candidate => candidate.memberId === payload.targetMemberId);
+  const target = game.players[targetIndex];
+  if (!target) return fail("目标不存在");
+  if (payload.vote === "red") {
+    applyScoreChange(targetIndex, "config", 10, { sourcePlayerIndex: playerIndex });
+    target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 3);
+    appendLog(`${player.name} 向${target.name}送出红票：配置水平+10，连续3回合不可发动技能。`, "effect");
+  } else if (payload.vote === "green") {
+    target.extraDrawNextTurn++;
+    appendLog(`${player.name} 向${target.name}送出绿票：下回合额外摸1张牌。`, "effect");
+  } else {
+    return fail("请选择红票或绿票");
+  }
+  player.reviewActionUsed = true;
   return ok();
 }
 
@@ -1100,13 +1692,12 @@ function endTurn(playerIndex) {
   if (game.round === 1 && !player.firstRoundSkillUsed) {
     return fail("第1轮必须发动至少1次角色技能");
   }
-  if (player.disableSkillTurns > 0) player.disableSkillTurns--;
-  if (player.extraTurns > 0) {
-    player.extraTurns--;
-    appendLog(`${player.name} 开始额外回合。`, "effect");
-    beginTurn();
-    return ok();
-  }
+  if (player.disableCharacterTurns > 0) player.disableCharacterTurns--;
+  if (player.disableAllSkillTurns > 0) player.disableAllSkillTurns--;
+  if (player.reviewTurns > 0) player.reviewTurns--;
+  player.characters.forEach(character => {
+    if (character.disabledTurns > 0) character.disabledTurns--;
+  });
   game.currentPlayerIndex++;
   if (game.currentPlayerIndex >= game.players.length) {
     game.currentPlayerIndex = 0;
@@ -1122,9 +1713,33 @@ function endTurn(playerIndex) {
 }
 
 function settleGame() {
+  const preliminary = game.players
+    .map((player, index) => ({ index, score: totalScore(player) }))
+    .sort((a, b) => b.score - a.score);
+  preliminary.forEach((entry, rankIndex) => {
+    const player = game.players[entry.index];
+    if (!ownsCharacter(player, "dagezi") || rankIndex === 0) return;
+    const gap = preliminary[rankIndex - 1].score - entry.score;
+    const triggers = Math.floor(gap / 3);
+    for (let i = 0; i < triggers; i++) {
+      const opponents = game.players.map((_, index) => index).filter(index => index !== entry.index && !game.players[index].frozen);
+      if (!opponents.length) break;
+      const targetIndex = randomItem(opponents);
+      game.players[targetIndex].settlementPenalty -= 2;
+      appendLog(`${player.name} 的结算被动使${game.players[targetIndex].name}综合分-2。`, "effect");
+    }
+  });
   game.phase = GAME_PHASE.SETTLEMENT;
   game.ranking = game.players
-    .map(player => ({ memberId: player.memberId, name: player.name, score: totalScore(player), scores: clone(player.scores), reputation: player.reputation }))
+    .map(player => ({
+      memberId: player.memberId,
+      name: player.name,
+      score: totalScore(player),
+      scores: clone(player.scores),
+      reputation: player.reputation,
+      storyboard: player.storyboard,
+      settlementPenalty: player.settlementPenalty
+    }))
     .sort((a, b) => b.score - a.score);
   room.lifecycle = ROOM_STATE.SETTLEMENT;
   appendLog("全部回合结束，进入结算。", "event");
@@ -1163,7 +1778,10 @@ function hostDispatch(memberId, action, payload = {}) {
     result = executeSkillCard(playerIndex, payload.cardUid, payload);
   } else if (action === "ACTIVATE_CHARACTER") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合发动角色技能");
-    result = activateCharacter(playerIndex, payload.characterId, payload);
+    result = activateCharacter(playerIndex, payload.characterId, payload.abilityId, payload);
+  } else if (action === "REVIEW_VOTE") {
+    if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合进行评议");
+    result = executeReviewVote(playerIndex, payload);
   } else if (action === "END_TURN") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("现在不能结束回合");
     result = endTurn(playerIndex);
@@ -1192,8 +1810,7 @@ function publicRoom() {
     hostId: room.hostId,
     lifecycle: room.lifecycle,
     settings: clone(room.settings),
-    members: clone(room.members),
-    countdownEndsAt: room.countdownEndsAt
+    members: clone(room.members)
   };
 }
 
@@ -1205,12 +1822,11 @@ function applyRoomSnapshot(snapshot) {
   room.lifecycle = snapshot.lifecycle;
   room.settings = snapshot.settings;
   room.members = snapshot.members;
-  room.countdownEndsAt = snapshot.countdownEndsAt || 0;
   room.connected = true;
   ui.hostLostAt = 0;
   ui.message = "";
   ui.messageError = false;
-  ui.screen = room.lifecycle === ROOM_STATE.WAITING || room.lifecycle === ROOM_STATE.COUNTDOWN ? "lobby" : "game";
+  ui.screen = room.lifecycle === ROOM_STATE.WAITING ? "lobby" : "game";
 }
 
 function syncAll() {
@@ -1256,33 +1872,28 @@ function handleJoin(message, meta) {
     member.name = safeName;
     member.peerId = meta.peerId;
   } else {
-    const activeCount = room.members.filter(item => !item.spectator).length;
     const spectator = room.lifecycle === ROOM_STATE.PLAYING ||
-      room.lifecycle === ROOM_STATE.SETTLEMENT ||
-      activeCount >= room.settings.maxPlayers;
+      room.lifecycle === ROOM_STATE.SETTLEMENT;
     member = {
       id: message.playerId,
       name: safeName,
       isHost: false,
-      ready: false,
       connected: true,
       spectator,
       peerId: meta.peerId
     };
     room.members.push(member);
-    if (room.lifecycle === ROOM_STATE.COUNTDOWN) cancelCountdown("有新玩家加入，倒计时已取消。");
   }
   if (game) {
     const player = game.players.find(item => item.memberId === member.id);
     if (player) {
       player.connected = true;
       player.disconnectedAt = 0;
-      player.aiControlled = false;
       member.spectator = false;
     }
   }
   sendWelcome(member.id);
-  if (room.lifecycle === ROOM_STATE.WAITING || room.lifecycle === ROOM_STATE.COUNTDOWN) broadcastLobby();
+  if (room.lifecycle === ROOM_STATE.WAITING) broadcastLobby();
   else syncAll();
 }
 
@@ -1356,17 +1967,14 @@ function handleRoomAction(memberId, action, payload) {
   if (!room.isHost) return;
   const member = room.members.find(item => item.id === memberId);
   if (!member) return;
-  if (action === "TOGGLE_READY" && room.lifecycle === ROOM_STATE.WAITING && !member.spectator) {
-    member.ready = !member.ready;
-    broadcastLobby();
-  } else if (action === "UPDATE_ROUNDS" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
+  if (action === "UPDATE_ROUNDS" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
     const rounds = Number(payload.totalRounds);
-    if ([6, 8, 10, 12, 15].includes(rounds)) {
+    if (Number.isSafeInteger(rounds) && rounds > 0) {
       room.settings.totalRounds = rounds;
       broadcastLobby();
     }
   } else if (action === "START" && memberId === room.hostId) {
-    startCountdown();
+    startGame();
   } else if (action === "BACK_TO_LOBBY" && memberId === room.hostId && room.lifecycle === ROOM_STATE.SETTLEMENT) {
     resetToLobby();
   } else if (action === "LEAVE") {
@@ -1393,51 +2001,25 @@ function sendGameAction(action, payload = {}) {
   render();
 }
 
-function startCountdown() {
-  const players = roomPlayers();
+function startGame() {
+  const players = roomPlayers().filter(member => member.connected);
   if (room.lifecycle !== ROOM_STATE.WAITING) return;
   if (players.length < 2) return showToast("至少需要2名玩家");
-  if (players.some(member => !member.connected)) return showToast("存在掉线玩家");
-  if (players.some(member => member.id !== room.hostId && !member.ready)) return showToast("仍有玩家未准备");
-  room.lifecycle = ROOM_STATE.COUNTDOWN;
-  room.countdownEndsAt = Date.now() + 3000;
-  broadcastLobby();
-  clearTimeout(ui.countdownStartTimer);
-  ui.countdownStartTimer = setTimeout(() => {
-    if (room.lifecycle !== ROOM_STATE.COUNTDOWN) return;
-    const currentPlayers = roomPlayers();
-    if (currentPlayers.length < 2 || currentPlayers.some(member => !member.connected)) {
-      cancelCountdown("人数不足，倒计时已取消。");
-      return;
-    }
-    game = createGameState(currentPlayers, room.settings.totalRounds);
-    room.lifecycle = ROOM_STATE.PLAYING;
-    room.countdownEndsAt = 0;
-    appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有12点购置点数。`, "event");
-    syncAll();
-  }, 3050);
-}
-
-function cancelCountdown(reason = "") {
-  clearTimeout(ui.countdownStartTimer);
-  clearTimeout(ui.countdownPaintTimer);
-  room.lifecycle = ROOM_STATE.WAITING;
-  room.countdownEndsAt = 0;
-  if (reason) ui.message = reason;
-  broadcastLobby();
+  game = createGameState(players, room.settings.totalRounds);
+  room.lifecycle = ROOM_STATE.PLAYING;
+  appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有12点购置点数。`, "event");
+  syncAll();
 }
 
 function resetToLobby() {
   game = null;
   room.lifecycle = ROOM_STATE.WAITING;
-  room.countdownEndsAt = 0;
   const connected = room.members
     .filter(member => member.connected)
     .sort((a, b) => Number(b.id === room.hostId) - Number(a.id === room.hostId));
-  room.members = connected.map((member, index) => ({
+  room.members = connected.map(member => ({
     ...member,
-    spectator: index >= room.settings.maxPlayers,
-    ready: member.id === room.hostId
+    spectator: false
   }));
   broadcastLobby();
 }
@@ -1452,50 +2034,19 @@ function markMemberDisconnected(memberId, voluntary = false) {
     return;
   }
   member.connected = false;
-  member.ready = false;
   member.disconnectedAt = Date.now();
   const player = game?.players.find(item => item.memberId === memberId);
   if (player) {
     player.connected = false;
     player.disconnectedAt = Date.now();
   }
-  if (room.lifecycle === ROOM_STATE.COUNTDOWN) cancelCountdown("玩家离开，倒计时已取消。");
-  else if (game) syncAll();
+  if (game) syncAll();
   else broadcastLobby();
-  if (player) {
-    setTimeout(() => {
-      const current = game?.players.find(item => item.memberId === memberId);
-      if (!current || current.connected) return;
-      current.aiControlled = true;
-      appendLog(`${current.name} 断线超过90秒，已转为自动托管。`, "event");
-      scheduleAIIfNeeded();
-      syncAll();
-    }, 90000);
-  }
-}
-
-function scheduleAIIfNeeded() {
-  if (!room.isHost || !game || game.phase !== GAME_PHASE.TURN) return;
-  const player = currentPlayer();
-  if (!player?.aiControlled) return;
-  setTimeout(() => {
-    if (!room.isHost || currentPlayer()?.memberId !== player.memberId) return;
-    if (!game.turn.hasDrawn) {
-      game.turn.hasDrawn = true;
-      drawCard(game.currentPlayerIndex);
-    }
-    if (game.round === 1 && !player.firstRoundSkillUsed && player.characters[0]) {
-      activateCharacter(game.currentPlayerIndex, player.characters[0].id, { dimension: "abstract" });
-    }
-    endTurn(game.currentPlayerIndex);
-    game.sequence++;
-    syncAll();
-  }, 900);
 }
 
 async function createRoom(name) {
   ui.busy = true;
-  ui.message = "正在创建跨网络房间...";
+  ui.message = "正在创建房间...";
   ui.messageError = false;
   render();
   const code = cryptoRandom(5);
@@ -1509,12 +2060,11 @@ async function createRoom(name) {
     room.hostId = room.myId;
     room.isHost = true;
     room.lifecycle = ROOM_STATE.WAITING;
-    room.settings = { totalRounds: 10, maxPlayers: 8 };
+    room.settings = { totalRounds: 10 };
     room.members = [{
       id: room.myId,
       name,
       isHost: true,
-      ready: true,
       connected: true,
       spectator: false,
       peerId: transport.myPeerId
@@ -1670,11 +2220,6 @@ function reconnectToCurrentHost() {
 function leaveRoom() {
   if (!room.connected) return resetClient();
   if (room.isHost) {
-    if (room.lifecycle === ROOM_STATE.COUNTDOWN) {
-      clearTimeout(ui.countdownStartTimer);
-      room.lifecycle = ROOM_STATE.WAITING;
-      room.countdownEndsAt = 0;
-    }
     const next = room.members.find(member => member.id !== room.myId && member.connected && !member.spectator);
     if (next) {
       const snapshot = publicRoom();
@@ -1696,8 +2241,6 @@ function leaveRoom() {
 }
 
 function resetClient() {
-  clearTimeout(ui.countdownStartTimer);
-  clearTimeout(ui.countdownPaintTimer);
   clearTimeout(ui.migrationTimer);
   room.transport?.close();
   room.connected = false;
@@ -1717,7 +2260,7 @@ function resetClient() {
 
 function render() {
   if (ui.screen === "entry" || !room.connected) renderEntry();
-  else if (room.lifecycle === ROOM_STATE.WAITING || room.lifecycle === ROOM_STATE.COUNTDOWN) renderLobby();
+  else if (room.lifecycle === ROOM_STATE.WAITING) renderLobby();
   else if (room.lifecycle === ROOM_STATE.SETTLEMENT || game?.phase === GAME_PHASE.SETTLEMENT) renderSettlement();
   else renderGame();
   if (ui.toast) app.insertAdjacentHTML("beforeend", `<div class="toast" role="status">${escapeHtml(ui.toast)}</div>`);
@@ -1737,7 +2280,7 @@ function renderEntry() {
         <div><h1>谱师卡牌</h1><div class="version">${VERSION}</div></div>
       </div>
       <section class="entry-form">
-        <div class="mode-line">${icon("radio-tower", 18)} 跨网络 P2P 房间</div>
+        <div class="mode-line">${icon("users", 18)} 房间</div>
         <div class="field">
           <label for="player-name">玩家名称</label>
           <input class="input" id="player-name" maxlength="16" autocomplete="nickname" placeholder="输入你的名称" value="${escapeHtml(room.myName)}">
@@ -1749,7 +2292,7 @@ function renderEntry() {
           <button class="btn" id="join-room" ${ui.busy ? "disabled" : ""}>${icon("log-in", 16)} 加入</button>
         </div>
         <div class="status-message ${ui.messageError ? "error" : ""}" role="status">${escapeHtml(ui.message)}</div>
-        <div class="brief">支持2至8人。房间由创建者设备负责结算，使用 PeerJS 公共信令建立 WebRTC 连接。游戏中加入的成员自动进入观战。</div>
+        <div class="brief">房间人数大于1人即可开始。游戏开始后加入的成员只能观战，等本局结束后再加入玩家列表。</div>
       </section>
     </div>`;
   const nameInput = document.getElementById("player-name");
@@ -1776,7 +2319,6 @@ function topbar(title, extra = "") {
   return `
     <header class="topbar">
       <div class="topbar-title">${escapeHtml(title)}</div>
-      <span class="version version-inline">${VERSION}</span>
       <span class="room-pill">${room.code}</span>
       ${extra}
       <span class="spacer"></span>
@@ -1791,11 +2333,9 @@ function bindTopbar() {
 }
 
 function renderLobby() {
-  const readyPlayers = roomPlayers();
+  const activePlayers = roomPlayers().filter(member => member.connected);
   const canStart = room.isHost &&
-    readyPlayers.length >= 2 &&
-    readyPlayers.every(member => member.connected) &&
-    readyPlayers.every(member => member.id === room.hostId || member.ready);
+    activePlayers.length >= 2;
   app.innerHTML = `
     ${topbar("房间大厅", `<span class="state-pill">${room.lifecycle}</span>`)}
     <div class="room-layout">
@@ -1803,17 +2343,17 @@ function renderLobby() {
         <section class="section">
           <div class="section-note">房间码</div>
           <div class="lobby-code">${room.code}</div>
-          <div class="lobby-sub">将房间码发给其他玩家，跨网络也可加入。</div>
+          <div class="lobby-sub">将房间码发给其他玩家。</div>
           <div class="lobby-actions">
             <button class="btn" id="copy-code">${icon("copy", 15)} 复制房间码</button>
             ${room.isHost
               ? `<button class="btn primary" id="start-game" ${canStart ? "" : "disabled"}>${icon("play", 15)} 开始游戏</button>`
-              : `<button class="btn primary" id="ready-button" ${myMember()?.spectator ? "disabled" : ""}>${myMember()?.ready ? icon("x", 15) + " 取消准备" : icon("check", 15) + " 准备"}</button>`}
+              : ""}
           </div>
           <div class="status-message ${ui.messageError ? "error" : ""}">${escapeHtml(ui.message)}</div>
         </section>
         <section class="section">
-          <div class="section-head"><h2>玩家列表</h2><span class="section-note">${readyPlayers.length}/8 名玩家</span></div>
+          <div class="section-head"><h2>玩家列表</h2><span class="section-note">${activePlayers.length} 名玩家</span></div>
           <div class="member-list">${room.members.map(renderMemberRow).join("")}</div>
         </section>
       </div>
@@ -1821,24 +2361,17 @@ function renderLobby() {
         <section class="section">
           <div class="section-head"><h2>房间设置</h2>${room.isHost ? '<span class="tag host">房主可改</span>' : ""}</div>
           <div class="setting-row">
-            <div class="setting-label">总回合数<span>所有玩家各行动一次记为1轮</span></div>
-            <div class="segment" id="round-segment">
-              ${[6, 8, 10, 12, 15].map(value => `<button data-round="${value}" class="${room.settings.totalRounds === value ? "active" : ""}" ${room.isHost ? "" : "disabled"}>${value}</button>`).join("")}
-            </div>
+            <div class="setting-label">总回合数<span>回合数可由玩家自行设置</span></div>
+            <input class="input round-input" id="round-count" type="number" min="1" step="1" value="${room.settings.totalRounds}" ${room.isHost ? "" : "disabled"}>
           </div>
           <div class="setting-row">
             <div class="setting-label">初始购置点数<span>购置角色后进入第1轮</span></div>
             <strong>12</strong>
           </div>
-          <div class="setting-row">
-            <div class="setting-label">连接方式<span>静态部署可用，无局域网模式</span></div>
-            <strong>WebRTC</strong>
-          </div>
         </section>
-        <div class="notice">需要至少2名玩家，且所有非房主玩家准备后才能开始。游戏开始后新成员只能观战。</div>
+        <div class="notice">房间人数大于1人即可开始。游戏开始后新成员只能观战。</div>
       </aside>
-    </div>
-    ${room.lifecycle === ROOM_STATE.COUNTDOWN ? renderCountdown() : ""}`;
+    </div>`;
   bindTopbar();
   document.getElementById("copy-code").onclick = async () => {
     try {
@@ -1850,20 +2383,18 @@ function renderLobby() {
   };
   if (room.isHost) {
     document.getElementById("start-game").onclick = () => sendRoomAction("START");
-    document.querySelectorAll("[data-round]").forEach(button => {
-      button.onclick = () => sendRoomAction("UPDATE_ROUNDS", { totalRounds: Number(button.dataset.round) });
-    });
-  } else {
-    document.getElementById("ready-button").onclick = () => sendRoomAction("TOGGLE_READY");
+    document.getElementById("round-count").onchange = event => {
+      const rounds = Number(event.target.value);
+      if (Number.isSafeInteger(rounds) && rounds > 0) sendRoomAction("UPDATE_ROUNDS", { totalRounds: rounds });
+      else render();
+    };
   }
-  if (room.lifecycle === ROOM_STATE.COUNTDOWN) scheduleCountdownPaint();
 }
 
 function renderMemberRow(member) {
   const labels = [
     member.isHost ? '<span class="tag host">房主</span>' : "",
     member.spectator ? '<span class="tag spectator">观战</span>' : "",
-    !member.spectator && member.ready ? '<span class="tag ready">已准备</span>' : "",
     !member.connected ? '<span class="tag bad">掉线</span>' : "",
     member.id === room.myId ? '<span class="tag">你</span>' : ""
   ].join("");
@@ -1872,22 +2403,6 @@ function renderMemberRow(member) {
     <span class="member-name">${escapeHtml(member.name)}</span>
     ${labels}
   </div>`;
-}
-
-function renderCountdown() {
-  const seconds = Math.max(1, Math.ceil((room.countdownEndsAt - Date.now()) / 1000));
-  return `<div class="countdown"><div class="countdown-inner"><div class="countdown-number" id="countdown-number">${seconds}</div><div class="countdown-text">游戏即将开始</div></div></div>`;
-}
-
-function scheduleCountdownPaint() {
-  clearTimeout(ui.countdownPaintTimer);
-  const tick = () => {
-    if (room.lifecycle !== ROOM_STATE.COUNTDOWN || room.isHost) return;
-    const element = document.getElementById("countdown-number");
-    if (element) element.textContent = Math.max(1, Math.ceil((room.countdownEndsAt - Date.now()) / 1000));
-    ui.countdownPaintTimer = setTimeout(tick, 250);
-  };
-  tick();
 }
 
 function renderGame() {
@@ -1906,7 +2421,7 @@ function renderGame() {
           ${game.players.map((player, index) => renderPlayerMini(player, index)).join("")}
         </section>
         <section class="section">
-          <div class="section-head"><h2>操作记录</h2><span class="section-note">主机结算</span></div>
+          <div class="section-head"><h2>操作记录</h2></div>
           <div class="log-list">${game.log.slice().reverse().map(renderLog).join("")}</div>
         </section>
       </aside>
@@ -1923,17 +2438,23 @@ function renderGame() {
 function renderDimensionPanel(player) {
   if (!player) return "";
   return `<div class="dimension-panel">
-    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]}</div><div class="dimension-value">${player.scores[dim]}</div></div>`).join("")}
+    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]} · ${SCORE_WEIGHTS[dim] * 100}%</div><div class="dimension-value">${formatNumber(player.scores[dim])}</div></div>`).join("")}
     <div class="dimension reputation"><div class="dimension-label">声望 / 总分</div><div class="dimension-value">${player.reputation} <span class="dimension-total">· ${totalScore(player)}</span></div></div>
   </div>`;
+}
+
+function formatNumber(value) {
+  return Number.isInteger(value) ? value : roundScore(value);
 }
 
 function renderPlayerMini(player, index) {
   const active = index === game.currentPlayerIndex;
   const statuses = [
-    player.disableSkillTurns > 0 ? `<span class="tag bad">禁技${player.disableSkillTurns}</span>` : "",
-    player.extraTurns > 0 ? `<span class="tag good">额外${player.extraTurns}</span>` : "",
-    player.aiControlled ? '<span class="tag spectator">托管</span>' : "",
+    player.disableAllSkillTurns > 0 || player.disableUntilOwnTurn ? `<span class="tag bad">禁用技能</span>` : "",
+    player.disableCharacterTurns > 0 ? `<span class="tag bad">角色禁用${player.disableCharacterTurns}</span>` : "",
+    player.reviewTurns > 0 ? `<span class="tag good">评议${player.reviewTurns}</span>` : "",
+    player.frozen ? '<span class="tag bad">点数定格</span>' : "",
+    player.storyboard ? '<span class="tag good">故事板</span>' : "",
     !player.connected ? '<span class="tag bad">掉线</span>' : ""
   ].join("");
   return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
@@ -1949,9 +2470,9 @@ function renderLog(entry) {
 function renderDraft(me) {
   const active = isMyTurn() && !isSpectator();
   return `
-    <div class="phase-banner">${icon("shopping-basket", 19)}<div><strong>${active ? "轮到你购置角色" : `等待 ${escapeHtml(currentPlayer()?.name)} 购置`}</strong><span>每名玩家拥有12点，不可重复购置同一角色；至少购置1名角色。</span></div></div>
+    <div class="phase-banner">${icon("shopping-basket", 19)}<div><strong>${active ? "轮到你购置角色" : `等待 ${escapeHtml(currentPlayer()?.name)} 购置`}</strong><span>每名玩家拥有12点，不可重复购置同一角色。</span></div></div>
     <section class="section">
-      <div class="section-head"><h2>公共角色卡池</h2><span class="shop-balance">剩余 ${me?.funds ?? "-"} 点</span></div>
+      <div class="section-head"><h2>角色卡池</h2><span class="shop-balance">剩余 ${me?.funds ?? "-"} 点</span></div>
       <div class="character-grid">${CHARACTERS.map(character => renderShopCard(character, me, active)).join("")}</div>
     </section>
     <div class="actionbar">
@@ -1968,8 +2489,13 @@ function renderShopCard(character, me, active) {
     <div class="card-top"><span class="card-kind">角色</span><span class="rarity">${character.rarity}</span></div>
     <div class="card-glyph">${icon(character.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(character.name)}</div>
-    <div class="card-desc"><strong>${escapeHtml(character.ability)}</strong><br>${escapeHtml(character.description)}</div>
-    <div class="card-meta">初始选曲 ${character.selection} · CD ${character.cooldown}</div>
+    ${character.lore ? `<div class="card-lore">${escapeHtml(character.lore)}</div>` : ""}
+    <div class="character-stats">${CHARACTER_STATS.map(stat => `<div class="character-stat"><span>${CHARACTER_STAT_LABELS[stat]}</span><b>★${character.stats[stat]}</b></div>`).join("")}</div>
+    <div class="card-desc">
+      ${character.abilities.map((ability, index) => `<div class="card-effect"><strong>${character.abilities.length > 1 ? `角色技能${index + 1}` : "角色技能"}</strong> ${escapeHtml(ability.description)}</div>`).join("")}
+      <div class="card-passive"><strong>被动技能</strong> ${escapeHtml(character.passive)}</div>
+    </div>
+    <div class="card-meta">购置 ${price}点 · 选曲品味 ${character.stats.selection}</div>
     <div class="card-action">${owned
       ? '<div class="owned-mark">已购置</div>'
       : `<button class="btn ${affordable ? "coral" : ""}" data-buy="${character.id}" ${affordable ? "" : "disabled"}>${icon("coins", 14)} ${price}点购置</button>`}</div>
@@ -1988,20 +2514,20 @@ function renderTurn(me) {
   const ownTurn = isMyTurn() && !isSpectator();
   const mustUseCharacter = ownTurn && game.round === 1 && !me?.firstRoundSkillUsed;
   const hand = me?.hand || [];
-  const responseCards = !ownTurn && hand.filter(card => skillDefinition(card.cardId)?.timing === "response");
   let instruction = `等待 ${escapeHtml(currentPlayer()?.name)} 完成回合`;
-  if (ownTurn && !game.turn.hasDrawn) instruction = "先从公共牌堆摸1张牌";
-  else if (mustUseCharacter) instruction = "第1轮必须发动1次角色技能";
-  else if (ownTurn) instruction = "可打出至多3张技能牌、发动角色技能或结束回合";
-  else if (responseCards.length) instruction = "你有可在他人回合使用的即时技能牌";
+  if (mustUseCharacter && !game.turn.hasDrawn) instruction = "第1轮至少发动1次角色技能，本轮还需摸1张牌";
+  else if (mustUseCharacter) instruction = "第1轮至少发动1次角色技能";
+  else if (ownTurn && !game.turn.hasDrawn) instruction = "本轮必须且只能摸1张牌";
+  else if (ownTurn) instruction = "可以发动角色技能、打出技能牌或结束回合";
   return `
-    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 本回合技能牌 ${game.turn.skillCardsPlayed}/3</span></div></div>
+    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 本回合打出 ${game.turn.skillCardsPlayed} 张技能牌</span></div></div>
+    ${renderPlayerStatuses(me, ownTurn)}
     <section class="section">
       <div class="section-head"><h2>手牌</h2><span class="section-note">${me ? `${me.handCount}张` : "不可见"}</span></div>
       ${hand.length ? `<div class="card-row">${hand.map(card => renderSkillCard(card, me, ownTurn)).join("")}</div>` : '<div class="empty">暂无技能牌。事件牌摸到后会立即触发，不会进入这里。</div>'}
     </section>
     <section class="section">
-      <div class="section-head"><h2>角色技能</h2><span class="section-note">${me?.disableSkillTurns > 0 ? `禁用剩余${me.disableSkillTurns}回合` : "按角色独立冷却"}</span></div>
+      <div class="section-head"><h2>角色技能</h2><span class="section-note">角色牌只能发动技能</span></div>
       ${me?.characters.length ? `<div class="ability-grid">${me.characters.map(instance => renderAbility(instance, me, ownTurn)).join("")}</div>` : '<div class="empty">未购置角色</div>'}
     </section>
     <div class="actionbar">
@@ -2011,45 +2537,47 @@ function renderTurn(me) {
     </div>`;
 }
 
+function renderPlayerStatuses(me, ownTurn) {
+  if (!me) return "";
+  const statuses = [
+    me.reviewTurns > 0 ? `<span class="tag good">评议剩余${me.reviewTurns}回合</span>` : "",
+    me.storyboard ? '<span class="tag good">故事板 +5</span>' : "",
+    me.frozen ? '<span class="tag bad">所有点数定格</span>' : "",
+    me.commissionLocked ? '<span class="tag bad">约稿点数锁定</span>' : "",
+    me.commissionLockAtRound != null && !me.commissionLocked ? `<span class="tag">第${me.commissionLockAtRound}轮锁定</span>` : "",
+    me.disableAllSkillTurns > 0 || me.disableUntilOwnTurn ? '<span class="tag bad">本回合不可发动技能</span>' : "",
+    me.disableCharacterTurns > 0 ? `<span class="tag bad">角色技能禁用${me.disableCharacterTurns}回合</span>` : ""
+  ].filter(Boolean);
+  const canReview = ownTurn && me.reviewTurns > 0 && !me.reviewActionUsed && !isAllSkillBlocked(me) && !ui.pendingRequest;
+  if (!statuses.length && !canReview) return "";
+  return `<div class="status-row">${statuses.join("")}${canReview ? `<button class="btn small" id="review-vote">${icon("tickets", 14)} 进行评议</button>` : ""}</div>`;
+}
+
 function renderSkillCard(card, me, ownTurn) {
   const definition = skillDefinition(card.cardId);
-  const canUse = !ui.pendingRequest &&
-    ((ownTurn && game.turn.hasDrawn && definition.timing === "turn" && game.turn.skillCardsPlayed < 3) ||
-     (!ownTurn && definition.timing === "response"));
+  const canUse = ownTurn && !ui.pendingRequest && !isAllSkillBlocked(me);
   return `<article class="game-card skill">
-    <div class="card-top"><span class="card-kind">技能牌</span><span class="rarity">${definition.timing === "response" ? "即时" : "己方"}</span></div>
+    <div class="card-top"><span class="card-kind">技能牌</span><span class="rarity">己方</span></div>
     <div class="card-glyph">${icon(definition.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(definition.name)}</div>
     <div class="card-desc">${escapeHtml(definition.description)}</div>
-    <div class="card-meta">${definition.timing === "response" ? "他人回合可响应" : "自己的回合使用"}</div>
+    <div class="card-meta">自己的回合使用</div>
     <div class="card-action"><button class="btn" data-play-card="${card.uid}" ${canUse ? "" : "disabled"}>${icon("play", 13)} 使用</button></div>
   </article>`;
 }
 
 function renderAbility(instance, me, ownTurn) {
   const definition = characterDefinition(instance.id);
-  const firstRoundOverride = game.round === 1 && !me.firstRoundSkillUsed;
-  const disabledByStatus = me.disableSkillTurns > 0 && !firstRoundOverride;
-  const usedThisTurn = game.turn.usedCharacterIds.includes(instance.id);
-  const canUse = ownTurn &&
-    game.turn.hasDrawn &&
-    !ui.pendingRequest &&
-    !instance.permanentlyDisabled &&
-    !usedThisTurn &&
-    instance.cooldownLeft === 0 &&
-    !disabledByStatus;
-  let status = "可发动";
-  if (!game.turn.hasDrawn) status = "摸牌后可用";
-  if (usedThisTurn) status = "本回合已发动";
-  if (disabledByStatus) status = "本回合禁用";
-  if (instance.cooldownLeft > 0) status = `冷却 ${instance.cooldownLeft}`;
-  if (instance.permanentlyDisabled) status = "永久失效";
-  if (firstRoundOverride && me.disableSkillTurns > 0) status = "强制规则覆盖禁用";
-  return `<article class="ability-item">
-    <div class="ability-head"><div><div class="ability-name">${escapeHtml(definition.ability)}</div><div class="ability-owner">${escapeHtml(definition.name)}</div></div><span class="tag ${canUse ? "good" : ""}">${status}</span></div>
-    <div class="ability-desc">${escapeHtml(definition.description)}</div>
-    <button class="btn" data-ability="${definition.id}" ${canUse ? "" : "disabled"}>${icon("sparkles", 13)} 发动技能</button>
-  </article>`;
+  return definition.abilities.map((ability, abilityIndex) => {
+    const allowed = ownTurn ? canActivateCharacter(me, instance, ability) : fail("等待自己的回合");
+    const canUse = ownTurn && !ui.pendingRequest && allowed.ok;
+    return `<article class="ability-item">
+      <div class="ability-head"><div><div class="ability-name">${definition.abilities.length > 1 ? `角色技能${abilityIndex + 1}` : "角色技能"}</div><div class="ability-owner">${escapeHtml(definition.name)}</div></div><span class="tag ${canUse ? "good" : ""}">${canUse ? "可发动" : escapeHtml(allowed.reason)}</span></div>
+      <div class="ability-desc">${escapeHtml(ability.description)}</div>
+      ${abilityIndex === 0 ? `<div class="ability-passive"><strong>被动：</strong>${escapeHtml(definition.passive)}</div>` : ""}
+      <button class="btn" data-character="${definition.id}" data-ability="${ability.id}" ${canUse ? "" : "disabled"}>${icon("sparkles", 13)} 发动技能</button>
+    </article>`;
+  }).join("");
 }
 
 function bindTurn(me) {
@@ -2059,8 +2587,9 @@ function bindTurn(me) {
     button.onclick = () => openCardAction(button.dataset.playCard);
   });
   document.querySelectorAll("[data-ability]").forEach(button => {
-    button.onclick = () => openAbilityAction(button.dataset.ability);
+    button.onclick = () => openAbilityAction(button.dataset.character, button.dataset.ability);
   });
+  document.getElementById("review-vote")?.addEventListener("click", openReviewAction);
 }
 
 function openCardAction(cardUid) {
@@ -2069,55 +2598,136 @@ function openCardAction(cardUid) {
   const definition = skillDefinition(card?.cardId);
   if (!card || !definition) return;
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
-  if (definition.target === "motion") {
-    ui.modal = { kind: "motion-card", cardUid, title: definition.name, description: definition.description };
+  const targets = game.players.filter(player => player.memberId !== me.memberId);
+  ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
+  render();
+}
+
+function openAbilityAction(characterId, abilityId) {
+  const definition = characterDefinition(characterId);
+  const ability = characterAbilityDefinition(characterId, abilityId);
+  if (!definition || !ability) return;
+  if (ability.choice === "three-dimensions") {
+    ui.modal = { kind: "three-dimensions", characterId, abilityId, title: definition.name, description: ability.description, selected: [] };
+  } else if (ability.choice === "motion-distribution") {
+    ui.modal = { kind: "motion-distribution", characterId, abilityId, title: definition.name, description: ability.description };
+  } else if (ability.choice === "up-to-two-targets") {
+    ui.modal = {
+      kind: "up-to-two-targets",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      targets: game.players.filter(player => player.memberId !== room.myId),
+      selected: []
+    };
+  } else if (ability.choice === "opponent") {
+    ui.modal = {
+      kind: "target-ability",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      targets: game.players.filter(player => player.memberId !== room.myId)
+    };
   } else {
-    const targets = game.players.filter(player => definition.target === "any" || player.memberId !== me.memberId);
-    ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
+    return sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId });
   }
   render();
 }
 
-function openAbilityAction(characterId) {
-  const definition = characterDefinition(characterId);
-  if (definition?.choice === "motion") {
-    ui.modal = { kind: "motion-ability", characterId, title: definition.ability, description: definition.description };
-    render();
-  } else {
-    sendGameAction("ACTIVATE_CHARACTER", { characterId });
-  }
+function openReviewAction() {
+  ui.modal = {
+    kind: "review-vote",
+    title: "评议",
+    description: skillDefinition("review").description,
+    targets: game.players
+  };
+  render();
 }
 
 function renderActionModal() {
   const modal = ui.modal;
   let choices = "";
-  if (modal.kind === "target-card") {
-    choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
-  } else {
+  if (modal.kind === "target-card" || modal.kind === "target-ability") {
+    choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
+  } else if (modal.kind === "motion-distribution") {
     choices = `<div class="target-list">
-      <button class="target-btn" data-dimension="abstract"><span>抽象动效</span><span class="target-score">选择</span></button>
-      <button class="target-btn" data-dimension="concrete"><span>具象动效</span><span class="target-score">选择</span></button>
+      ${[0, 1, 2, 3, 4, 5].map(value => `<button class="target-btn" data-motion-points="${value}"><span>抽象 ${value} · 具象 ${5 - value}</span><span class="target-score">5点</span></button>`).join("")}
     </div>`;
+  } else if (modal.kind === "three-dimensions") {
+    choices = `<div class="target-list">${CHANGEABLE_DIMENSIONS.map(dim => `<button class="target-btn ${modal.selected.includes(dim) ? "selected" : ""}" data-toggle-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selected.includes(dim) ? "已选" : "选择"}</span></button>`).join("")}</div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selected.length === 3 ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "up-to-two-targets") {
+    choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn ${modal.selected.includes(target.memberId) ? "selected" : ""}" data-toggle-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${modal.selected.includes(target.memberId) ? "已选" : "选择"}</span></button>`).join("")}</div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
+  } else if (modal.kind === "review-vote") {
+    choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   }
   app.insertAdjacentHTML("beforeend", `<div class="modal"><div class="modal-box">
     <div class="modal-head"><h3>${escapeHtml(modal.title)}</h3><button class="btn icon-only small" id="close-modal" title="关闭">${icon("x", 15)}</button></div>
     <div class="modal-desc">${escapeHtml(modal.description)}</div>${choices}
   </div></div>`);
   document.getElementById("close-modal").onclick = () => { ui.modal = null; render(); };
-  document.querySelectorAll("[data-target]").forEach(button => {
+  document.querySelectorAll("[data-select-target]").forEach(button => {
     button.onclick = () => {
-      const cardUid = modal.cardUid;
-      const targetMemberId = button.dataset.target;
+      const targetMemberId = button.dataset.selectTarget;
       ui.modal = null;
-      sendGameAction("PLAY_CARD", { cardUid, targetMemberId });
+      if (modal.kind === "target-card") sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId });
+      else sendGameAction("ACTIVATE_CHARACTER", { characterId: modal.characterId, abilityId: modal.abilityId, targetMemberId });
     };
   });
-  document.querySelectorAll("[data-dimension]").forEach(button => {
+  document.querySelectorAll("[data-motion-points]").forEach(button => {
     button.onclick = () => {
-      const dimension = button.dataset.dimension;
       ui.modal = null;
-      if (modal.kind === "motion-card") sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, dimension });
-      else sendGameAction("ACTIVATE_CHARACTER", { characterId: modal.characterId, dimension });
+      sendGameAction("ACTIVATE_CHARACTER", {
+        characterId: modal.characterId,
+        abilityId: modal.abilityId,
+        abstractPoints: Number(button.dataset.motionPoints)
+      });
+    };
+  });
+  document.querySelectorAll("[data-toggle-dimension]").forEach(button => {
+    button.onclick = () => {
+      const dimension = button.dataset.toggleDimension;
+      modal.selected = modal.selected.includes(dimension)
+        ? modal.selected.filter(item => item !== dimension)
+        : modal.selected.length < 3 ? [...modal.selected, dimension] : modal.selected;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-toggle-target]").forEach(button => {
+    button.onclick = () => {
+      const targetId = button.dataset.toggleTarget;
+      modal.selected = modal.selected.includes(targetId)
+        ? modal.selected.filter(item => item !== targetId)
+        : modal.selected.length < 2 ? [...modal.selected, targetId] : modal.selected;
+      render();
+    };
+  });
+  document.getElementById("confirm-modal")?.addEventListener("click", () => {
+    ui.modal = null;
+    if (modal.kind === "three-dimensions") {
+      sendGameAction("ACTIVATE_CHARACTER", {
+        characterId: modal.characterId,
+        abilityId: modal.abilityId,
+        dimensions: modal.selected
+      });
+    } else {
+      sendGameAction("ACTIVATE_CHARACTER", {
+        characterId: modal.characterId,
+        abilityId: modal.abilityId,
+        targetMemberIds: modal.selected
+      });
+    }
+  });
+  document.querySelectorAll("[data-review-target]").forEach(button => {
+    button.onclick = () => {
+      ui.modal = null;
+      sendGameAction("REVIEW_VOTE", {
+        targetMemberId: button.dataset.reviewTarget,
+        vote: button.dataset.vote
+      });
     };
   });
 }
@@ -2132,7 +2742,7 @@ function renderSettlement() {
       <div class="winner"><div class="winner-label">${winners.length > 1 ? "并列冠军" : "冠军"}</div><div class="winner-name">${escapeHtml(winners.join("、"))}</div></div>
       <div class="ranking">${ranking.map((item, index) => `<div class="rank-row">
         <div class="rank-pos">${index + 1}</div>
-        <div><div class="rank-name">${escapeHtml(item.name)}</div><div class="rank-detail">五维 ${DIMENSIONS.reduce((sum, dim) => sum + item.scores[dim], 0)} · 声望 ${item.reputation}</div></div>
+        <div><div class="rank-name">${escapeHtml(item.name)}</div><div class="rank-detail">选曲5% · 配置40% · 抽象20% · 具象20% · 创新15% · 声望 ${item.reputation}${item.storyboard ? " · 故事板+5" : ""}${item.settlementPenalty ? ` · ${item.settlementPenalty}` : ""}</div></div>
         <div class="rank-score">${item.score}</div>
       </div>`).join("")}</div>
       ${room.isHost
@@ -2146,14 +2756,20 @@ function renderSettlement() {
 function renderRulesModal() {
   app.insertAdjacentHTML("beforeend", `<div class="modal"><div class="modal-box rules-dialog">
     <div class="modal-head"><h3>规则摘要</h3><button class="btn icon-only small" id="close-rules" title="关闭">${icon("x", 15)}</button></div>
+    <p class="modal-desc">目标是让自己的谱面在OthPecJam中夺得冠军。历时设定回合数后，谱面综合评分最高的玩家获胜。</p>
     <ol>
       <li><strong>购置：</strong>每人12点，按S/A+/A/B+/B/C支付6/5/4/3/2/1点，不可重复购置同一角色。</li>
-      <li><strong>回合：</strong>先摸1张牌，再打出至多3张技能牌并选择是否发动角色技能。</li>
+      <li><strong>开局：</strong>所有玩家轮流购置角色，然后从技能卡池抽取5张技能牌。</li>
+      <li><strong>回合：</strong>每轮必须且只能摸1张牌；自己的轮次可发动角色技能和技能牌。</li>
       <li><strong>第1轮：</strong>每位玩家必须发动至少1次角色技能，以该角色数值确定初始选曲品味。</li>
-      <li><strong>事件牌：</strong>摸到后不进入手牌，立即强制结算，并直接洗回公共牌堆。</li>
-      <li><strong>结算：</strong>总分为五个维度分数之和加声望，最高者获胜，同分并列。</li>
-      <li><strong>冲突优先级：</strong>${RULE_PRIORITY.join(" > ")}。</li>
+      <li><strong>事件牌：</strong>不进入手牌，摸到后强制触发，并重新回到卡池。</li>
+      <li><strong>结算：</strong>选曲品味5%、配置水平40%、抽象动效20%、具象动效20%、创新程度15%；属性值在结算时加入总分，且可以为负。</li>
+      <li><strong>房间：</strong>人数大于1人即可开始；开局后加入的成员只能观战，本局结束后再加入玩家列表。</li>
     </ol>
+    <h4>事件牌</h4>
+    <div class="modal-desc">${EVENT_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
+    <h4>技能牌</h4>
+    <div class="modal-desc">${SKILL_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
   </div></div>`);
   document.getElementById("close-rules").onclick = () => { ui.rulesOpen = false; render(); };
 }
