@@ -668,7 +668,7 @@
 const VERSION = "v1.0.2";
 const CHANGELOG = Object.freeze([
   { version: "v1.0.2", items: [
-    "完善房间系统：localStorage 自动重连、游戏层心跳检测、断线/重连系统消息、手动房主转让、断线90秒ABANDONED机制",
+    "完善房间系统：localStorage 自动重连、心跳ACK重试、断线/重连消息、手动房主转让、断线90秒AI永久托管、120秒无操作AI永久接管",
     "新增聊天系统：房间频道、快捷短语、系统消息、房主禁言、敏感词过滤、玩家屏蔽",
     "更新日志按版本分组显示"
   ]},
@@ -1225,7 +1225,8 @@ function createGameState(members, totalRounds) {
       },
       connected: true,
       disconnectedAt: 0,
-      abandoned: false
+      aiControlled: false,
+      lastActionAt: Date.now()
     })),
     deck: createDeck(),
     discard: [],
@@ -1783,23 +1784,24 @@ function beginTurn() {
     number: game.turn.number + 1
   };
   appendLog(`轮到 ${player.name} 行动。`);
+  player.lastActionAt = Date.now();
   if (player.extraDrawNextTurn > 0) {
     const count = player.extraDrawNextTurn;
     player.extraDrawNextTurn = 0;
     drawCards(game.currentPlayerIndex, count);
     appendLog(`${player.name} 额外摸${count}张牌。`, "effect");
   }
-  if (!player.isBot && player.abandoned) {
-    appendLog(`${player.name} 已弃权，自动跳过回合。`, "event");
-    endTurn(game.currentPlayerIndex);
+  if (!player.isBot && player.aiControlled) {
+    appendLog(`${player.name} 由 AI 托管执行本轮操作。`, "event");
+    scheduleBotAction();
     return;
   }
   if (!player.isBot && player.connected === false) {
-    appendLog(`${player.name} 处于断线状态，15秒后自动跳过回合。`, "event");
+    appendLog(`${player.name} 处于断线状态，AI 将在 15 秒后接管操作。`, "event");
     setTimeout(() => {
-      if (game && game.phase !== GAME_PHASE.SETTLEMENT && currentPlayer() === player && player.connected === false && !player.abandoned) {
-        appendLog(`${player.name} 断线超时，自动跳过回合。`, "event");
-        endTurn(game.currentPlayerIndex);
+      if (game && game.phase !== GAME_PHASE.SETTLEMENT && currentPlayer() === player && player.connected === false && !player.aiControlled) {
+        appendLog(`${player.name} 断线未重连，AI 接管本轮操作。`, "event");
+        scheduleBotAction();
       }
     }, 15000);
   }
@@ -1846,6 +1848,8 @@ function finishDraft(playerIndex) {
     beginTurn();
   } else {
     game.currentPlayerIndex = (game.currentPlayerIndex + 1) % game.players.length;
+    const next = game.players[game.currentPlayerIndex];
+    if (next) next.lastActionAt = Date.now();
   }
   return ok();
 }
@@ -2174,8 +2178,7 @@ function endTurn(playerIndex) {
 
 function settleGame() {
   const preliminary = game.players
-    .filter(player => !player.abandoned)
-    .map((player, index) => ({ index: game.players.indexOf(player), score: totalScore(player) }))
+    .map((player, index) => ({ index, score: totalScore(player) }))
     .sort((a, b) => b.score - a.score);
   preliminary.forEach((entry, rankIndex) => {
     const player = game.players[entry.index];
@@ -2183,7 +2186,7 @@ function settleGame() {
     const gap = preliminary[rankIndex - 1].score - entry.score;
     const triggers = Math.floor(gap / 3);
     for (let i = 0; i < triggers; i++) {
-      const opponents = preliminary.map(e => e.index).filter(index => index !== entry.index && !game.players[index].frozen);
+      const opponents = game.players.map((_, index) => index).filter(index => index !== entry.index && !game.players[index].frozen);
       if (!opponents.length) break;
       const targetIndex = randomItem(opponents);
       game.players[targetIndex].settlementPenalty -= 2;
@@ -2192,7 +2195,6 @@ function settleGame() {
   });
   game.phase = GAME_PHASE.SETTLEMENT;
   game.ranking = game.players
-    .filter(player => !player.abandoned)
     .map(player => ({
       memberId: player.memberId,
       name: player.name,
@@ -2216,11 +2218,14 @@ function validateActor(memberId) {
   return { index, error: null };
 }
 
-function hostDispatch(memberId, action, payload = {}, requestId = "") {
+function hostDispatch(memberId, action, payload = {}, requestId = "", internalCall = false) {
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return fail("游戏当前不可操作");
   const actor = validateActor(memberId);
   if (actor.error) return actor.error;
   const playerIndex = actor.index;
+  const player = game.players[playerIndex];
+  // AI 托管的真人玩家不允许远端手动操作（内部 AI 执行时 internalCall 跳过此检查）
+  if (!player.isBot && player.aiControlled && !internalCall) return fail("该玩家已由 AI 永久托管");
   const ownTurn = game.currentPlayerIndex === playerIndex;
   let result = fail("未知操作");
 
@@ -2257,6 +2262,7 @@ function hostDispatch(memberId, action, payload = {}, requestId = "") {
 
   if (result.ok) {
     game.sequence++;
+    if (player) player.lastActionAt = Date.now();
     syncAll(memberId, requestId);
   }
   return result;
@@ -2330,38 +2336,42 @@ function resolveBotEvent(playerIndex) {
     return hostDispatch(player.memberId, "RESOLVE_EVENT", {
       ownCharacterUid: randomItem(player.characters)?.uid,
       targetMemberId: game.players[targetIndex]?.memberId
-    });
+    }, "", true);
   }
   const targetCharacterUid = randomItem(player.characters)?.uid;
   if (pending.eventId === "maimai") {
-    return hostDispatch(player.memberId, "RESOLVE_EVENT", { targetCharacterUid });
+    return hostDispatch(player.memberId, "RESOLVE_EVENT", { targetCharacterUid }, "", true);
   }
   const decision = player.difficulty === "normal" || Math.random() < .65 ? "accept" : "refuse";
   return hostDispatch(player.memberId, "RESOLVE_EVENT", {
     decision,
     targetCharacterUid
-  });
+  }, "", true);
+}
+
+function isAIActor(player) {
+  return player?.isBot || player?.aiControlled;
 }
 
 function performBotAction() {
   ui.botTimer = null;
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
-  const pendingBotIndex = game.pendingEvent
-    ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && player.isBot)
+  const pendingIndex = game.pendingEvent
+    ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && isAIActor(player))
     : -1;
-  if (pendingBotIndex >= 0) {
-    resolveBotEvent(pendingBotIndex);
+  if (pendingIndex >= 0) {
+    resolveBotEvent(pendingIndex);
     return;
   }
   if (game.pendingEvent) return;
 
   const playerIndex = game.currentPlayerIndex;
   const player = game.players[playerIndex];
-  if (!player?.isBot) return;
+  if (!isAIActor(player)) return;
 
   if (game.phase === GAME_PHASE.DRAFT) {
     const choice = botCharacterChoice(playerIndex);
-    hostDispatch(player.memberId, choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {});
+    hostDispatch(player.memberId, choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {}, "", true);
     return;
   }
 
@@ -2375,16 +2385,16 @@ function performBotAction() {
           characterId: choice.instance.id,
           abilityId: choice.ability.id,
           ...botAbilityPayload(playerIndex, choice.instance, choice.ability)
-        });
+        }, "", true);
         return;
       }
     }
-    hostDispatch(player.memberId, "END_TURN");
+    hostDispatch(player.memberId, "END_TURN", {}, "", true);
     return;
   }
 
   if (!game.turn.hasDrawn) {
-    hostDispatch(player.memberId, "DRAW");
+    hostDispatch(player.memberId, "DRAW", {}, "", true);
     return;
   }
 
@@ -2393,7 +2403,7 @@ function performBotAction() {
     hostDispatch(player.memberId, "REVIEW_VOTE", {
       targetMemberId: game.players[targetIndex].memberId,
       vote: player.difficulty === "normal" ? "red" : randomItem(["red", "green"])
-    });
+    }, "", true);
     return;
   }
 
@@ -2405,7 +2415,7 @@ function performBotAction() {
       characterId: abilityChoice.instance.id,
       abilityId: abilityChoice.ability.id,
       ...botAbilityPayload(playerIndex, abilityChoice.instance, abilityChoice.ability)
-    });
+    }, "", true);
     return;
   }
 
@@ -2420,11 +2430,11 @@ function performBotAction() {
       if (skillDefinition(card.cardId)?.target === "opponent") {
         payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
       }
-      hostDispatch(player.memberId, "PLAY_CARD", payload);
+      hostDispatch(player.memberId, "PLAY_CARD", payload, "", true);
       return;
     }
   }
-  hostDispatch(player.memberId, "END_TURN");
+  hostDispatch(player.memberId, "END_TURN", {}, "", true);
 }
 
 function scheduleBotAction() {
@@ -2435,7 +2445,7 @@ function scheduleBotAction() {
     ? game.players.find(player => player.memberId === game.pendingEvent.responderMemberId)
     : null;
   const actor = pendingResponder || currentPlayer();
-  if (!actor?.isBot) return;
+  if (!isAIActor(actor)) return;
   const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;
   ui.botTimer = setTimeout(performBotAction, delay);
 }
@@ -2570,7 +2580,7 @@ function scheduleHostPeriodicSync() {
   ui.hostPeriodicTimer = setTimeout(() => {
     ui.hostPeriodicTimer = null;
     if (!room.isHost || !game) return;
-    checkAbandonedPlayers();
+    checkAIControl();
     const currentSeq = game.sequence ?? 0;
     room.members.forEach(member => {
       if (member.id === room.myId || !member.connected || member.isBot) return;
@@ -2585,32 +2595,44 @@ function scheduleHostPeriodicSync() {
   }, 5000);
 }
 
-const ABANDON_TIMEOUT_MS = 90000;
+const DISCONNECT_AI_TIMEOUT_MS = 90000;
+const INACTIVE_AI_TIMEOUT_MS = 120000;
 
-function checkAbandonedPlayers() {
+function setAIControl(playerIndex, reason) {
+  const player = game.players[playerIndex];
+  if (player.isBot || player.aiControlled) return false;
+  player.aiControlled = true;
+  appendLog(`${player.name} ${reason}，由 AI 永久接管所有操作。`, "event");
+  pushSystemChat(`${player.name} 已进入 AI 托管状态。`);
+  return true;
+}
+
+function checkAIControl() {
   if (!game || game.phase === GAME_PHASE.SETTLEMENT) return;
   const now = Date.now();
   let changed = false;
-  game.players.forEach(player => {
-    if (player.isBot || player.abandoned || player.connected) return;
-    if (!player.disconnectedAt) return;
-    if (now - player.disconnectedAt >= ABANDON_TIMEOUT_MS) {
-      player.abandoned = true;
-      appendLog(`${player.name} 断线超过90秒，已判弃权。`, "event");
-      pushSystemChat(`${player.name} 已弃权。`);
-      changed = true;
+  const wasCurrentAI = currentPlayer()?.aiControlled;
+  game.players.forEach((player, playerIndex) => {
+    if (player.isBot || player.aiControlled) return;
+    // 1) 断线超过 90 秒 → AI 托管
+    if (!player.connected && player.disconnectedAt && now - player.disconnectedAt >= DISCONNECT_AI_TIMEOUT_MS) {
+      if (setAIControl(playerIndex, "断线超过 90 秒")) changed = true;
+      return;
+    }
+    // 2) 轮到当前玩家且连续 120 秒未操作（即使未掉线）→ AI 托管（DRAFT 和 TURN 阶段）
+    if (game.currentPlayerIndex === playerIndex &&
+        (game.phase === GAME_PHASE.TURN || game.phase === GAME_PHASE.DRAFT)) {
+      const lastAction = player.lastActionAt || player.disconnectedAt || now;
+      if (now - lastAction >= INACTIVE_AI_TIMEOUT_MS) {
+        if (setAIControl(playerIndex, "超过 120 秒未操作")) changed = true;
+      }
     }
   });
   if (changed) {
-    const activePlayers = game.players.filter(p => !p.abandoned);
-    if (activePlayers.length < 2) {
-      appendLog(`剩余活跃玩家不足2人，游戏强制结束。`, "event");
-      settleGame();
-      return;
-    }
-    const current = currentPlayer();
-    if (current && current.abandoned) {
-      endTurn(game.currentPlayerIndex);
+    // 如果当前玩家刚被设为AI托管，立即启动AI行动
+    const cur = currentPlayer();
+    if (cur && cur.aiControlled && !wasCurrentAI) {
+      scheduleBotAction();
     }
     syncAll();
   }
@@ -2754,13 +2776,24 @@ function handleJoin(message, meta) {
   if (game) {
     const player = game.players.find(item => item.memberId === member.id);
     if (player) {
-      if (player.abandoned) {
+      if (player.aiControlled) {
         member.spectator = true;
-        pushSystemChat(`${member.name} 已弃权，以观战身份重连。`);
+        pushSystemChat(`${member.name} 已进入 AI 托管，以观战身份重连。`);
       } else {
-        player.connected = true;
-        player.disconnectedAt = 0;
-        member.spectator = false;
+        // 检查重连时间是否在 90 秒内
+        const now = Date.now();
+        const within90 = !player.disconnectedAt || (now - player.disconnectedAt < DISCONNECT_AI_TIMEOUT_MS);
+        if (within90) {
+          player.connected = true;
+          player.disconnectedAt = 0;
+          member.spectator = false;
+        } else {
+          // 超过 90 秒，以观战身份进入，AI 继续托管
+          player.aiControlled = true;
+          member.spectator = true;
+          pushSystemChat(`${member.name} 断线超过 90 秒重连，以观战身份进入（AI 托管中）。`);
+          appendLog(`${player.name} 断线超过 90 秒重连，AI 永久接管。`, "event");
+        }
       }
     }
   }
@@ -3778,7 +3811,7 @@ function renderPlayerMini(player, index) {
     player.reviewTurns > 0 ? `<span class="tag good">评议${player.reviewTurns}</span>` : "",
     player.frozen ? '<span class="tag bad">点数定格</span>' : "",
     player.storyboard ? '<span class="tag good">故事板</span>' : "",
-    player.abandoned ? '<span class="tag bad">弃权</span>' : (!player.connected ? '<span class="tag bad">掉线</span>' : "")
+    player.aiControlled ? '<span class="tag good">AI托管</span>' : (!player.connected ? '<span class="tag bad">掉线</span>' : "")
   ].join("");
   return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
     <div class="player-mini-head"><span class="player-mini-name">${escapeHtml(player.name)}</span>${active ? '<span class="tag good">当前</span>' : ""}${statuses}</div>
