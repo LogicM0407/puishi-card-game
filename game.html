@@ -627,6 +627,8 @@
   .entry-changelog ul { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--text); line-height: 1.7; }
   .entry-reconnect { margin-bottom: 10px; padding: 10px; background: var(--surface-2); border: 1px solid var(--accent, #6ee7ff); border-radius: 6px; }
   .entry-reconnect .reconnect-info { font-size: 12px; color: var(--text); margin-bottom: 8px; display: flex; align-items: center; gap: 4px; }
+  .bot-actions { display: flex; flex-direction: column; gap: 6px; }
+  .tag.bot { background: rgba(110, 231, 255, .15); color: #6ee7ff; border: 1px solid rgba(110, 231, 255, .3); }
   .chat-panel { position: fixed; bottom: 0; right: 0; width: 300px; max-height: 360px; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px 0 0 0; display: flex; flex-direction: column; z-index: 100; box-shadow: -2px -2px 8px rgba(0,0,0,.3); }
   .chat-panel.collapsed { height: 36px; max-height: 36px; }
   .chat-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; cursor: pointer; background: var(--surface-2); border-radius: 8px 0 0 0; flex-shrink: 0; }
@@ -650,6 +652,8 @@
   .chat-quick button { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 2px 8px; color: var(--text); font-size: 10px; cursor: pointer; }
   .chat-quick button:active { background: var(--surface-3, #333); }
   .chat-muted-notice { font-size: 10px; color: var(--coral, #f87171); padding: 2px 8px 4px; text-align: center; }
+  .chat-block-btn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 10px; vertical-align: middle; opacity: .5; }
+  .chat-block-btn:hover { opacity: 1; }
   @media (max-width: 640px) {
     .chat-panel { width: 100%; max-height: 280px; border-radius: 0; }
   }
@@ -664,8 +668,8 @@
 const VERSION = "v1.0.2";
 const CHANGELOG = Object.freeze([
   { version: "v1.0.2", items: [
-    "完善房间系统：localStorage 自动重连、游戏层心跳检测、断线/重连系统消息",
-    "新增聊天系统：房间频道、快捷短语、系统消息、房主禁言",
+    "完善房间系统：localStorage 自动重连、游戏层心跳检测、断线/重连系统消息、手动房主转让、断线90秒ABANDONED机制",
+    "新增聊天系统：房间频道、快捷短语、系统消息、房主禁言、敏感词过滤、玩家屏蔽",
     "更新日志按版本分组显示"
   ]},
   { version: "v1.0.1", items: [
@@ -1034,7 +1038,8 @@ const ui = {
   chatLastSent: 0,
   heartbeatTimer: null,
   heartbeatMisses: 0,
-  mutedPlayerIds: new Set()
+  mutedPlayerIds: new Set(),
+  blockedPlayerIds: null
 };
 
 const room = {
@@ -1219,7 +1224,8 @@ function createGameState(members, totalRounds) {
         ziweiHighest: {}
       },
       connected: true,
-      disconnectedAt: 0
+      disconnectedAt: 0,
+      abandoned: false
     })),
     deck: createDeck(),
     discard: [],
@@ -1783,6 +1789,20 @@ function beginTurn() {
     drawCards(game.currentPlayerIndex, count);
     appendLog(`${player.name} 额外摸${count}张牌。`, "effect");
   }
+  if (!player.isBot && player.abandoned) {
+    appendLog(`${player.name} 已弃权，自动跳过回合。`, "event");
+    endTurn(game.currentPlayerIndex);
+    return;
+  }
+  if (!player.isBot && player.connected === false) {
+    appendLog(`${player.name} 处于断线状态，15秒后自动跳过回合。`, "event");
+    setTimeout(() => {
+      if (game && game.phase !== GAME_PHASE.SETTLEMENT && currentPlayer() === player && player.connected === false && !player.abandoned) {
+        appendLog(`${player.name} 断线超时，自动跳过回合。`, "event");
+        endTurn(game.currentPlayerIndex);
+      }
+    }, 15000);
+  }
 }
 
 function buyCharacter(playerIndex, characterId) {
@@ -2154,7 +2174,8 @@ function endTurn(playerIndex) {
 
 function settleGame() {
   const preliminary = game.players
-    .map((player, index) => ({ index, score: totalScore(player) }))
+    .filter(player => !player.abandoned)
+    .map((player, index) => ({ index: game.players.indexOf(player), score: totalScore(player) }))
     .sort((a, b) => b.score - a.score);
   preliminary.forEach((entry, rankIndex) => {
     const player = game.players[entry.index];
@@ -2162,7 +2183,7 @@ function settleGame() {
     const gap = preliminary[rankIndex - 1].score - entry.score;
     const triggers = Math.floor(gap / 3);
     for (let i = 0; i < triggers; i++) {
-      const opponents = game.players.map((_, index) => index).filter(index => index !== entry.index && !game.players[index].frozen);
+      const opponents = preliminary.map(e => e.index).filter(index => index !== entry.index && !game.players[index].frozen);
       if (!opponents.length) break;
       const targetIndex = randomItem(opponents);
       game.players[targetIndex].settlementPenalty -= 2;
@@ -2171,6 +2192,7 @@ function settleGame() {
   });
   game.phase = GAME_PHASE.SETTLEMENT;
   game.ranking = game.players
+    .filter(player => !player.abandoned)
     .map(player => ({
       memberId: player.memberId,
       name: player.name,
@@ -2548,6 +2570,7 @@ function scheduleHostPeriodicSync() {
   ui.hostPeriodicTimer = setTimeout(() => {
     ui.hostPeriodicTimer = null;
     if (!room.isHost || !game) return;
+    checkAbandonedPlayers();
     const currentSeq = game.sequence ?? 0;
     room.members.forEach(member => {
       if (member.id === room.myId || !member.connected || member.isBot) return;
@@ -2560,6 +2583,37 @@ function scheduleHostPeriodicSync() {
     });
     scheduleHostPeriodicSync();
   }, 5000);
+}
+
+const ABANDON_TIMEOUT_MS = 90000;
+
+function checkAbandonedPlayers() {
+  if (!game || game.phase === GAME_PHASE.SETTLEMENT) return;
+  const now = Date.now();
+  let changed = false;
+  game.players.forEach(player => {
+    if (player.isBot || player.abandoned || player.connected) return;
+    if (!player.disconnectedAt) return;
+    if (now - player.disconnectedAt >= ABANDON_TIMEOUT_MS) {
+      player.abandoned = true;
+      appendLog(`${player.name} 断线超过90秒，已判弃权。`, "event");
+      pushSystemChat(`${player.name} 已弃权。`);
+      changed = true;
+    }
+  });
+  if (changed) {
+    const activePlayers = game.players.filter(p => !p.abandoned);
+    if (activePlayers.length < 2) {
+      appendLog(`剩余活跃玩家不足2人，游戏强制结束。`, "event");
+      settleGame();
+      return;
+    }
+    const current = currentPlayer();
+    if (current && current.abandoned) {
+      endTurn(game.currentPlayerIndex);
+    }
+    syncAll();
+  }
 }
 
 function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
@@ -2700,9 +2754,14 @@ function handleJoin(message, meta) {
   if (game) {
     const player = game.players.find(item => item.memberId === member.id);
     if (player) {
-      player.connected = true;
-      player.disconnectedAt = 0;
-      member.spectator = false;
+      if (player.abandoned) {
+        member.spectator = true;
+        pushSystemChat(`${member.name} 已弃权，以观战身份重连。`);
+      } else {
+        player.connected = true;
+        player.disconnectedAt = 0;
+        member.spectator = false;
+      }
     }
   }
   sendWelcome(member.id);
@@ -2892,6 +2951,42 @@ const CHAT_MAX_MESSAGES = 100;
 const CHAT_RATE_LIMIT_MS = 3000;
 const CHAT_MAX_LENGTH = 100;
 const QUICK_PHRASES = ["你好", "等我一下", "好牌！", "GG", "厉害", "😅", "🔥", "🎵"];
+const SENSITIVE_WORDS = ["操", "傻逼", "草泥马", "去死", "废物", "滚蛋", "智障", "脑残", "废物", "煞笔", "弱智", "狗日", "他妈", "你妈", " fuck", "shit", "bitch"];
+const BLOCKED_PLAYER_KEY = "puishi-blocked-players";
+
+function filterChatContent(text) {
+  let filtered = String(text || "");
+  SENSITIVE_WORDS.forEach(word => {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filtered = filtered.replace(new RegExp(escaped, "gi"), "*".repeat(word.length));
+  });
+  return filtered;
+}
+
+function loadBlockedPlayers() {
+  try {
+    const stored = localStorage.getItem(BLOCKED_PLAYER_KEY);
+    if (stored) return new Set(JSON.parse(stored));
+  } catch (_) {}
+  return new Set();
+}
+
+function saveBlockedPlayers(set) {
+  try { localStorage.setItem(BLOCKED_PLAYER_KEY, JSON.stringify([...set])); } catch (_) {}
+}
+
+function isPlayerBlocked(playerId) {
+  if (!ui.blockedPlayerIds) ui.blockedPlayerIds = loadBlockedPlayers();
+  return ui.blockedPlayerIds.has(playerId);
+}
+
+function toggleBlockPlayer(playerId) {
+  if (!ui.blockedPlayerIds) ui.blockedPlayerIds = loadBlockedPlayers();
+  if (ui.blockedPlayerIds.has(playerId)) ui.blockedPlayerIds.delete(playerId);
+  else ui.blockedPlayerIds.add(playerId);
+  saveBlockedPlayers(ui.blockedPlayerIds);
+  render();
+}
 
 function addChatMessage(message) {
   ui.chatMessages.push(message);
@@ -2919,7 +3014,7 @@ function handleChatMessage(senderId, message) {
     });
     return;
   }
-  const content = String(message.content || "").slice(0, CHAT_MAX_LENGTH).trim();
+  const content = filterChatContent(String(message.content || "").slice(0, CHAT_MAX_LENGTH).trim());
   if (!content) return;
   const chatMsg = {
     type: "chat",
@@ -2953,7 +3048,7 @@ function sendChat(text) {
     showToast("发言过快，请稍候");
     return;
   }
-  const content = String(text || "").slice(0, CHAT_MAX_LENGTH).trim();
+  const content = filterChatContent(String(text || "").slice(0, CHAT_MAX_LENGTH).trim());
   if (!content) return;
   ui.chatLastSent = now;
   if (room.isHost) {
@@ -3039,6 +3134,36 @@ function handleRoomAction(memberId, action, payload) {
     resetToLobby();
   } else if (action === "LEAVE") {
     markMemberDisconnected(memberId, true);
+  } else if (action === "ADD_BOT" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
+    const connectedRealPlayers = room.members.filter(m => m.connected && !m.spectator && !m.isBot).length;
+    const existingBots = room.members.filter(m => m.isBot).length;
+    if (connectedRealPlayers + existingBots >= 8) return showToast("房间人数已达上限");
+    const difficulty = payload.difficulty === "normal" ? "normal" : "simple";
+    const botNames = ["机器人A", "机器人B", "机器人C", "机器人D"];
+    const usedNames = new Set(room.members.map(m => m.name));
+    const botName = botNames.find(n => !usedNames.has(n)) || ("机器人" + (existingBots + 1));
+    const botMember = {
+      id: "bot_" + cryptoRandom(8),
+      name: botName,
+      isHost: false,
+      connected: true,
+      spectator: false,
+      peerId: null,
+      isBot: true,
+      difficulty
+    };
+    room.members.push(botMember);
+    pushSystemChat(`机器人「${botName}」(${difficulty === "normal" ? "普通" : "简单"})已加入房间。`);
+    broadcastLobby();
+  } else if (action === "REMOVE_BOT" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
+    const botId = String(payload.botId || "");
+    const bot = room.members.find(m => m.id === botId && m.isBot);
+    if (!bot) return;
+    room.members = room.members.filter(m => m.id !== botId);
+    pushSystemChat(`机器人「${bot.name}」已移出房间。`);
+    broadcastLobby();
+  } else if (action === "TRANSFER_HOST" && memberId === room.hostId) {
+    transferHost(String(payload.targetMemberId || ""));
   }
 }
 
@@ -3333,6 +3458,36 @@ function leaveRoom() {
   resetClient();
 }
 
+function transferHost(targetMemberId) {
+  if (!room.isHost) return;
+  const target = room.members.find(m => m.id === targetMemberId && m.connected && !m.spectator && !m.isBot && m.id !== room.myId);
+  if (!target) return showToast("该成员无法成为房主");
+  const snapshot = publicRoom();
+  snapshot.hostId = target.id;
+  snapshot.members = snapshot.members.map(member => ({
+    ...member,
+    isHost: member.id === target.id
+  }));
+  pushSystemChat(`房主已转让给「${target.name}」。`);
+  room.transport.sendToPlayer(target.id, { type: "PROMOTE", room: snapshot, gameBackup: game });
+  room.transport.broadcast({ type: "HOST_MOVING", nextHostId: target.id });
+  room.hostId = target.id;
+  room.isHost = false;
+  ui.message = "房主转让中，正在重连…";
+  clearTimeout(ui.hostPeriodicTimer);
+  ui.hostPeriodicTimer = null;
+  ui.pendingAcks.forEach(entry => clearTimeout(entry.timer));
+  ui.pendingAcks.clear();
+  ui.pendingSyncMembers.clear();
+  ui.lastAckedSequence.clear();
+  render();
+  setTimeout(() => {
+    room.transport?.close();
+    room.transport = null;
+    setTimeout(reconnectToCurrentHost, 1500);
+  }, 350);
+}
+
 function resetClient() {
   clearTimeout(ui.migrationTimer);
   clearTimeout(ui.syncTimer);
@@ -3516,6 +3671,15 @@ function renderLobby() {
           </div>
         </section>
         <div class="notice">房间人数大于1人即可开始。游戏开始后新成员只能观战。</div>
+        ${room.isHost && room.lifecycle === ROOM_STATE.WAITING ? `
+        <section class="section">
+          <div class="section-head"><h2>机器人</h2></div>
+          <div class="bot-actions">
+            <button class="btn" id="add-bot-simple">${icon("plus", 14)} 添加简单机器人</button>
+            <button class="btn" id="add-bot-normal">${icon("plus", 14)} 添加普通机器人</button>
+          </div>
+        </section>
+        ` : ""}
       </aside>
     </div>`;
   bindTopbar();
@@ -3534,12 +3698,23 @@ function renderLobby() {
       if (Number.isSafeInteger(rounds) && rounds > 0) sendRoomAction("UPDATE_ROUNDS", { totalRounds: rounds });
       else render();
     };
+    document.getElementById("add-bot-simple")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "simple" }));
+    document.getElementById("add-bot-normal")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "normal" }));
+    document.querySelectorAll(".remove-bot").forEach(btn => {
+      btn.onclick = () => sendRoomAction("REMOVE_BOT", { botId: btn.dataset.botId });
+    });
+    document.querySelectorAll(".transfer-host").forEach(btn => {
+      btn.onclick = () => {
+        if (confirm("确认将房主转让给该成员？")) sendRoomAction("TRANSFER_HOST", { targetMemberId: btn.dataset.targetId });
+      };
+    });
   }
 }
 
 function renderMemberRow(member) {
   const labels = [
     member.isHost ? '<span class="tag host">房主</span>' : "",
+    member.isBot ? `<span class="tag bot">${member.difficulty === "normal" ? "普通AI" : "简单AI"}</span>` : "",
     member.spectator ? '<span class="tag spectator">观战</span>' : "",
     !member.connected ? '<span class="tag bad">掉线</span>' : "",
     member.id === room.myId ? '<span class="tag">你</span>' : ""
@@ -3548,6 +3723,8 @@ function renderMemberRow(member) {
     <span class="member-dot ${member.connected ? "" : "offline"}"></span>
     <span class="member-name">${escapeHtml(member.name)}</span>
     ${labels}
+    ${room.isHost && member.isBot && room.lifecycle === ROOM_STATE.WAITING ? `<button class="btn icon-only small danger remove-bot" data-bot-id="${member.id}" title="移除">${icon("x", 12)}</button>` : ""}
+    ${room.isHost && !member.isBot && member.connected && !member.spectator && member.id !== room.myId ? `<button class="btn icon-only small transfer-host" data-target-id="${member.id}" title="转让房主">${icon("crown", 12)}</button>` : ""}
   </div>`;
 }
 
@@ -3601,7 +3778,7 @@ function renderPlayerMini(player, index) {
     player.reviewTurns > 0 ? `<span class="tag good">评议${player.reviewTurns}</span>` : "",
     player.frozen ? '<span class="tag bad">点数定格</span>' : "",
     player.storyboard ? '<span class="tag good">故事板</span>' : "",
-    !player.connected ? '<span class="tag bad">掉线</span>' : ""
+    player.abandoned ? '<span class="tag bad">弃权</span>' : (!player.connected ? '<span class="tag bad">掉线</span>' : "")
   ].join("");
   return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
     <div class="player-mini-head"><span class="player-mini-name">${escapeHtml(player.name)}</span>${active ? '<span class="tag good">当前</span>' : ""}${statuses}</div>
@@ -3903,14 +4080,18 @@ function renderSettlement() {
 function renderChatPanel() {
   const isMuted = ui.mutedPlayerIds.has(room.myId);
   const unreadCount = ui.chatMessages.length;
-  const messagesHtml = ui.chatMessages.slice(-50).map(msg => {
+  const messagesHtml = ui.chatMessages.slice(-50).filter(msg => {
+    if (msg.type === "system") return true;
+    return msg.senderId === room.myId || !isPlayerBlocked(msg.senderId);
+  }).map(msg => {
     if (msg.type === "system") {
       return `<div class="chat-msg system"><span class="chat-text">${escapeHtml(msg.text)}</span></div>`;
     }
     const isSelf = msg.senderId === room.myId;
     const senderClass = isSelf ? "self" : (msg.isSpectator ? "spectator" : "");
     const senderLabel = msg.isSpectator ? `[观战] ${escapeHtml(msg.senderName)}` : escapeHtml(msg.senderName);
-    return `<div class="chat-msg"><span class="chat-sender ${senderClass}">${senderLabel}:</span> <span class="chat-text">${escapeHtml(msg.content)}</span></div>`;
+    const blockBtn = isSelf ? "" : `<button class="chat-block-btn" data-block-id="${escapeHtml(msg.senderId)}" title="${isPlayerBlocked(msg.senderId) ? "取消屏蔽" : "屏蔽"}">${icon(isPlayerBlocked(msg.senderId) ? "eye" : "eye-off", 10)}</button>`;
+    return `<div class="chat-msg"><span class="chat-sender ${senderClass}">${senderLabel}:</span> <span class="chat-text">${escapeHtml(msg.content)}</span>${blockBtn}</div>`;
   }).join("");
   app.insertAdjacentHTML("beforeend", `
     <div class="chat-panel ${ui.chatOpen ? "" : "collapsed"}" id="chat-panel">
@@ -3965,6 +4146,9 @@ function renderChatPanel() {
         input.focus();
       };
     });
+    document.querySelectorAll(".chat-block-btn").forEach(btn => {
+      btn.onclick = () => toggleBlockPlayer(btn.dataset.blockId);
+    });
   }
 }
 
@@ -3989,6 +4173,7 @@ function renderRulesModal() {
   document.getElementById("close-rules").onclick = () => { ui.rulesOpen = false; render(); };
 }
 
+ui.blockedPlayerIds = loadBlockedPlayers();
 render();
 </script>
 
