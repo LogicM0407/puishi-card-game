@@ -865,6 +865,9 @@ const ui = {
   toastTimer: null,
   rulesOpen: false,
   pendingRequest: false,
+  pendingAction: null,
+  pendingActionTimer: null,
+  syncTimer: null,
   joinResolver: null,
   migrationTimer: null,
   hostLostAt: 0,
@@ -885,6 +888,7 @@ const room = {
 };
 
 let game = null;
+const processedGameActions = new Map();
 
 function cryptoRandom(length) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -1766,7 +1770,7 @@ function validateActor(memberId) {
   return { index, error: null };
 }
 
-function hostDispatch(memberId, action, payload = {}) {
+function hostDispatch(memberId, action, payload = {}, requestId = "") {
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return fail("游戏当前不可操作");
   const actor = validateActor(memberId);
   if (actor.error) return actor.error;
@@ -1802,7 +1806,7 @@ function hostDispatch(memberId, action, payload = {}) {
 
   if (result.ok) {
     game.sequence++;
-    syncAll();
+    syncAll(memberId, requestId);
   }
   return result;
 }
@@ -1842,19 +1846,36 @@ function applyRoomSnapshot(snapshot) {
   ui.screen = room.lifecycle === ROOM_STATE.WAITING ? "lobby" : "game";
 }
 
-function syncAll() {
+function authorityBackupFor(memberId) {
+  const successor = room.members.find(member =>
+    member.id !== room.hostId &&
+    member.connected &&
+    !member.spectator
+  );
+  return successor?.id === memberId ? game : null;
+}
+
+function sendStateToPlayer(memberId, acknowledgedRequestId = "") {
+  return room.transport?.sendToPlayer(memberId, {
+    type: "SYNC",
+    room: publicRoom(),
+    game: publicGameFor(memberId),
+    authorityBackup: authorityBackupFor(memberId),
+    acknowledgedRequestId
+  }) || false;
+}
+
+function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
   if (!room.isHost) {
     render();
     return;
   }
   room.members.forEach(member => {
     if (member.id === room.myId || !member.connected) return;
-    room.transport?.sendToPlayer(member.id, {
-      type: "SYNC",
-      room: publicRoom(),
-      game: publicGameFor(member.id),
-      authorityBackup: game
-    });
+    sendStateToPlayer(
+      member.id,
+      member.id === actorMemberId ? acknowledgedRequestId : ""
+    );
   });
   render();
 }
@@ -1864,8 +1885,84 @@ function sendWelcome(memberId) {
     type: "WELCOME",
     room: publicRoom(),
     game: publicGameFor(memberId),
-    authorityBackup: game
+    authorityBackup: authorityBackupFor(memberId)
   });
+}
+
+function clearPendingGameAction(requestId = "") {
+  if (requestId && ui.pendingAction?.requestId !== requestId) return;
+  clearTimeout(ui.pendingActionTimer);
+  ui.pendingActionTimer = null;
+  ui.pendingAction = null;
+  ui.pendingRequest = false;
+}
+
+function scheduleStateCheck() {
+  clearTimeout(ui.syncTimer);
+  ui.syncTimer = null;
+  if (room.isHost || !room.connected || !game) return;
+  ui.syncTimer = setTimeout(() => {
+    if (!room.isHost && room.connected && game) {
+      room.transport?.sendToHost({
+        type: "SYNC_REQUEST",
+        knownSequence: game.sequence ?? -1
+      });
+    }
+    scheduleStateCheck();
+  }, 7000);
+}
+
+function rememberGameAction(key, result) {
+  processedGameActions.set(key, {
+    ok: result.ok,
+    reason: result.reason || "",
+    draw: result.draw || null,
+    sequence: game?.sequence || 0
+  });
+  while (processedGameActions.size > 120) {
+    processedGameActions.delete(processedGameActions.keys().next().value);
+  }
+}
+
+function sendActionResult(memberId, requestId, result) {
+  room.transport?.sendToPlayer(memberId, {
+    type: "ACTION_RESULT",
+    requestId,
+    ok: result.ok,
+    reason: result.reason || "",
+    draw: result.draw || null,
+    sequence: result.sequence ?? game?.sequence ?? 0
+  });
+}
+
+function retryPendingGameAction() {
+  const pending = ui.pendingAction;
+  if (!pending || room.isHost || !room.connected) return;
+  if (pending.attempts >= 3) {
+    clearPendingGameAction(pending.requestId);
+    room.transport?.sendToHost({
+      type: "SYNC_REQUEST",
+      knownSequence: game?.sequence ?? -1
+    });
+    showToast("操作确认超时，已重新同步，请确认状态后重试");
+    render();
+    return;
+  }
+  pending.attempts++;
+  const sent = room.transport?.sendToHost({
+    type: "GAME_ACTION",
+    requestId: pending.requestId,
+    action: pending.action,
+    payload: pending.payload
+  });
+  if (!sent) {
+    clearPendingGameAction(pending.requestId);
+    showToast("连接暂不可用，请等待重连后重试");
+    render();
+    return;
+  }
+  clearTimeout(ui.pendingActionTimer);
+  ui.pendingActionTimer = setTimeout(retryPendingGameAction, 1800);
 }
 
 function broadcastLobby() {
@@ -1920,6 +2017,8 @@ function handleNetworkMessage(message, meta = {}) {
     applyRoomSnapshot(message.room);
     game = message.game;
     ui.authorityBackup = message.authorityBackup;
+    clearPendingGameAction();
+    scheduleStateCheck();
     if (ui.joinResolver) {
       ui.joinResolver(ok());
       ui.joinResolver = null;
@@ -1940,10 +2039,19 @@ function handleNetworkMessage(message, meta = {}) {
     return;
   }
   if (message.type === "SYNC") {
-    applyRoomSnapshot(message.room);
-    game = message.game;
-    ui.authorityBackup = message.authorityBackup;
-    ui.pendingRequest = false;
+    const incomingSequence = message.game?.sequence ?? -1;
+    const currentSequence = game?.sequence ?? -1;
+    if (!game || incomingSequence >= currentSequence) {
+      applyRoomSnapshot(message.room);
+      game = message.game;
+      ui.authorityBackup = message.authorityBackup;
+    }
+    const pendingConfirmedBySequence = ui.pendingAction &&
+      incomingSequence > ui.pendingAction.baseSequence;
+    if (message.acknowledgedRequestId || pendingConfirmedBySequence) {
+      clearPendingGameAction(message.acknowledgedRequestId);
+    }
+    scheduleStateCheck();
     render();
     return;
   }
@@ -1952,19 +2060,75 @@ function handleNetworkMessage(message, meta = {}) {
     return;
   }
   if (message.type === "GAME_ACTION" && room.isHost) {
-    const result = hostDispatch(meta.playerId, message.action, message.payload || {});
-    if (!result.ok) room.transport.sendToPlayer(meta.playerId, { type: "ACTION_ERROR", reason: result.reason });
-    else if (result.draw?.kind === "event") room.transport.sendToPlayer(meta.playerId, { type: "DRAW_NOTICE", text: `摸到事件牌「${result.draw.name}」，已立即结算。` });
+    const requestId = String(message.requestId || "").slice(0, 96);
+    const actionKey = requestId ? `${meta.playerId}:${requestId}` : "";
+    if (actionKey && processedGameActions.has(actionKey)) {
+      sendActionResult(meta.playerId, requestId, processedGameActions.get(actionKey));
+      sendStateToPlayer(meta.playerId, requestId);
+      return;
+    }
+    const result = hostDispatch(
+      meta.playerId,
+      message.action,
+      message.payload || {},
+      requestId
+    );
+    const response = { ...result, sequence: game?.sequence || 0 };
+    if (actionKey) rememberGameAction(actionKey, response);
+    sendActionResult(meta.playerId, requestId, response);
+    if (!requestId && !result.ok) {
+      room.transport?.sendToPlayer(meta.playerId, {
+        type: "ACTION_ERROR",
+        reason: result.reason
+      });
+    } else if (!requestId && result.draw?.kind === "event") {
+      room.transport?.sendToPlayer(meta.playerId, {
+        type: "DRAW_NOTICE",
+        text: `摸到事件牌「${result.draw.name}」，已立即结算。`
+      });
+    }
+    return;
+  }
+  if (message.type === "ACTION_RESULT") {
+    clearPendingGameAction(message.requestId);
+    if (!message.ok) {
+      showToast(message.reason || "操作失败");
+    } else if (message.draw?.kind === "event") {
+      showToast(`摸到事件牌「${message.draw.name}」，已立即结算。`);
+    }
+    if ((message.sequence ?? -1) > (game?.sequence ?? -1)) {
+      room.transport?.sendToHost({
+        type: "SYNC_REQUEST",
+        knownSequence: game?.sequence ?? -1
+      });
+    }
+    render();
     return;
   }
   if (message.type === "ACTION_ERROR") {
-    ui.pendingRequest = false;
+    clearPendingGameAction();
     showToast(message.reason || "操作失败");
     render();
     return;
   }
   if (message.type === "DRAW_NOTICE") {
     showToast(message.text);
+    return;
+  }
+  if (message.type === "SYNC_REQUEST" && room.isHost) {
+    const knownSequence = Number(message.knownSequence);
+    if (!Number.isSafeInteger(knownSequence) || knownSequence < (game?.sequence ?? 0)) {
+      sendStateToPlayer(meta.playerId);
+    } else {
+      room.transport?.sendToPlayer(meta.playerId, {
+        type: "SYNC_STATUS",
+        sequence: game?.sequence ?? 0
+      });
+    }
+    return;
+  }
+  if (message.type === "SYNC_STATUS") {
+    scheduleStateCheck();
     return;
   }
   if (message.type === "HOST_MOVING") {
@@ -2009,8 +2173,16 @@ function sendGameAction(action, payload = {}) {
     render();
     return;
   }
+  const requestId = `${room.myId}-${Date.now()}-${cryptoRandom(4)}`;
   ui.pendingRequest = true;
-  room.transport?.sendToHost({ type: "GAME_ACTION", action, payload });
+  ui.pendingAction = {
+    requestId,
+    action,
+    payload: clone(payload),
+    attempts: 0,
+    baseSequence: game?.sequence ?? -1
+  };
+  retryPendingGameAction();
   render();
 }
 
@@ -2019,6 +2191,7 @@ function startGame() {
   if (room.lifecycle !== ROOM_STATE.WAITING) return;
   if (players.length < 2) return showToast("至少需要2名玩家");
   game = createGameState(players, room.settings.totalRounds);
+  processedGameActions.clear();
   room.lifecycle = ROOM_STATE.PLAYING;
   appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有12点购置点数。`, "event");
   syncAll();
@@ -2026,6 +2199,7 @@ function startGame() {
 
 function resetToLobby() {
   game = null;
+  processedGameActions.clear();
   room.lifecycle = ROOM_STATE.WAITING;
   const connected = room.members
     .filter(member => member.connected)
@@ -2255,6 +2429,9 @@ function leaveRoom() {
 
 function resetClient() {
   clearTimeout(ui.migrationTimer);
+  clearTimeout(ui.syncTimer);
+  ui.syncTimer = null;
+  clearPendingGameAction();
   room.transport?.close();
   room.connected = false;
   room.code = "";
@@ -2266,7 +2443,6 @@ function resetClient() {
   game = null;
   ui.screen = "entry";
   ui.modal = null;
-  ui.pendingRequest = false;
   ui.message = "";
   render();
 }
@@ -2950,6 +3126,11 @@ class PeerTransport {
   bindPlayer(peerId, playerId, name) {
     const record = this.connections.get(peerId);
     if (!record) return;
+    for (const [existingPeerId, existing] of this.connections) {
+      if (existingPeerId === peerId || existing.playerId !== playerId) continue;
+      existing.playerId = null;
+      try { existing.connection.close(); } catch (_) {}
+    }
     record.playerId = playerId;
     record.name = name;
   }
@@ -2970,7 +3151,9 @@ class PeerTransport {
 
   sendToPlayer(playerId, message) {
     for (const record of this.connections.values()) {
-      if (record.playerId === playerId) return this.send(record.connection, message);
+      if (record.playerId === playerId && this.send(record.connection, message)) {
+        return true;
+      }
     }
     return false;
   }
