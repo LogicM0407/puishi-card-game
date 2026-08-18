@@ -438,6 +438,17 @@
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   .target-btn.selected { border-color: var(--cyan); background: var(--surface-3); }
   .vote-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .mini-characters { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .character-chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 2px 8px; border-radius: 10px;
+    background: rgba(70, 130, 180, .2);
+    border: 1px solid rgba(70, 130, 180, .5);
+    color: #cde4fb; font-size: 11px; cursor: help;
+  }
+  .character-chip.bad { background: rgba(200, 80, 80, .2); border-color: rgba(200, 80, 80, .5); color: #ffd2d2; }
+  .event-step { margin: 8px 0; }
+  .event-step-title { font-size: 12px; color: var(--cyan); margin: 8px 0 6px; font-weight: 600; }
   .log-list { max-height: 210px; overflow-y: auto; }
   .log-entry {
     display: grid;
@@ -1829,7 +1840,9 @@ function buyCharacter(playerIndex, characterId) {
     disabledTurns: 0,
     permanentlyDisabled: false
   });
-  appendLog(`${player.name} 购置了「${character.name}」，剩余${player.funds}点。`, "effect");
+  // 将角色的选曲品味加到玩家得分中
+  player.scores.selection += character.stats.selection;
+  appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${character.stats.selection}），剩余${player.funds}点。`, "effect");
   return ok();
 }
 
@@ -2000,7 +2013,11 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   } else if (ability.id === "chi-mahu-main") {
     const targetIndex = game.players.findIndex(candidate => candidate.memberId === payload.targetMemberId);
     const target = game.players[targetIndex];
-    gainReputation(playerIndex, -player.handExchangeCost);
+    const cost = player.handExchangeCost;
+    const before = player.reputation;
+    gainReputation(playerIndex, -cost);
+    const actualCost = before - player.reputation;
+    appendLog(`${player.name} 发动「吃马虎」技能，以 ${actualCost} 点声望为代价（下次代价翻倍为 ${cost * 2} 点）。`, "effect");
     handleNonPlayCardLoss(playerIndex, player.hand.length);
     handleNonPlayCardLoss(targetIndex, target.hand.length);
     const ownHand = player.hand;
@@ -2009,7 +2026,7 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     player.handCount = player.hand.length;
     target.handCount = target.hand.length;
     player.handExchangeCost *= 2;
-    appendLog(`${player.name} 与${target.name}交换全部手牌。`, "effect");
+    appendLog(`${player.name} 与${target.name}交换全部手牌（各 ${player.handCount}/${target.handCount} 张）。`, "effect");
   } else if (ability.id === "dagezi-main") {
     const lowest = Math.min(...DIMENSIONS.map(dim => player.scores[dim]));
     DIMENSIONS.forEach(dim => setScore(playerIndex, dim, lowest, { sourcePlayerIndex: playerIndex }));
@@ -2067,6 +2084,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     if (player.commissionLockAtRound <= game.round) player.commissionLocked = true;
   } else if (definition.id === "drink") {
     target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 1);
+    appendLog(`${target.name} 的 zpq 崩溃，下一回合不可发动技能。`, "effect");
   } else if (definition.id === "fge") {
     player.storyboard = true;
     player.storyboardBonus = Math.max(player.storyboardBonus, 5 * skillCardPointMultiplier(player));
@@ -2810,6 +2828,7 @@ function handleNetworkMessage(message, meta = {}) {
     return;
   }
   if (message.type === "WELCOME") {
+    room.connected = true;
     applyRoomSnapshot(message.room);
     game = message.game;
     ui.authorityBackup = message.authorityBackup;
@@ -3554,6 +3573,38 @@ function resetClient() {
 }
 
 function render() {
+  // 若有待处理事件且当前我是响应者，且没有其他modal，自动弹出事件处理窗口
+  if (!ui.modal && game?.pendingEvent && game.pendingEvent.responderMemberId === room.myId && !isSpectator()) {
+    const pending = game.pendingEvent;
+    const event = eventDefinition(pending.eventId);
+    if (pending.stage === "choose") {
+      const me = myGamePlayer();
+      ui.modal = {
+        kind: "event-choose",
+        title: `事件：${event.name}`,
+        description: event.description + "（请选择自己的1名角色和另一位玩家）",
+        ownCharacters: me?.characters.filter(c => !c.permanentlyDisabled) || [],
+        targets: game.players.filter(p => p.memberId !== me?.memberId),
+        selectedCharacterUid: null,
+        selectedTargetMemberId: null
+      };
+    } else if (pending.stage === "response") {
+      const actor = game.players[pending.actorIndex];
+      const targetPlayer = game.players[pending.targetPlayerIndex];
+      const mustAccept = pending.eventId === "maimai";
+      ui.modal = {
+        kind: "event-response",
+        title: `事件响应：${event.name}`,
+        description: mustAccept
+          ? `${actor.name} 邀请你一起「${event.name}」，必须参与。请选择自己的1名角色。`
+          : `${actor.name} 邀请你一起「${event.name}」。同意时选择1名角色拼机；拒绝时发起者声望-5但获得能力加成。`,
+        mustAccept,
+        myCharacters: targetPlayer?.characters.filter(c => !c.permanentlyDisabled) || [],
+        selectedCharacterUid: null,
+        decision: mustAccept ? "accept" : null
+      };
+    }
+  }
   if (ui.screen === "entry" || !room.connected) renderEntry();
   else if (room.lifecycle === ROOM_STATE.WAITING) renderLobby();
   else if (room.lifecycle === ROOM_STATE.SETTLEMENT || game?.phase === GAME_PHASE.SETTLEMENT) renderSettlement();
@@ -3816,6 +3867,11 @@ function renderPlayerMini(player, index) {
   return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
     <div class="player-mini-head"><span class="player-mini-name">${escapeHtml(player.name)}</span>${active ? '<span class="tag good">当前</span>' : ""}${statuses}</div>
     <div class="mini-dims">${DIMENSIONS.map(dim => `<span class="mini-dim">${DIMENSION_LABELS[dim].slice(0, 2)}<b>${player.scores[dim]}</b></span>`).join("")}</div>
+    ${player.characters?.length ? `<div class="mini-characters">${player.characters.map(instance => {
+      const character = characterDefinition(instance.id);
+      const disabled = instance.disabledTurns > 0 || instance.permanentlyDisabled;
+      return `<span class="character-chip ${disabled ? "bad" : ""}" title="${escapeHtml(character.name)} · 选曲品味 ${character.stats.selection}${instance.permanentlyDisabled ? " · 永久禁用" : instance.disabledTurns ? ` · 禁用${instance.disabledTurns}回合` : ""}">${escapeHtml(character.name.slice(0, 2))}</span>`;
+    }).join("")}</div>` : ""}
   </div>`;
 }
 
@@ -3979,12 +4035,14 @@ function openAbilityAction(characterId, abilityId) {
       selected: []
     };
   } else if (ability.choice === "opponent") {
+    const me = myGamePlayer();
+    const costHint = characterId === "chi-mahu" && me ? ` （当前声望代价：${me.handExchangeCost ?? 1} 点，下次发动翻倍）` : "";
     ui.modal = {
       kind: "target-ability",
       characterId,
       abilityId,
       title: definition.name,
-      description: ability.description,
+      description: ability.description + costHint,
       targets: game.players.filter(player => player.memberId !== room.myId)
     };
   } else {
@@ -4020,12 +4078,50 @@ function renderActionModal() {
       <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
+  } else if (modal.kind === "event-choose") {
+    const characterButtons = modal.ownCharacters.length
+      ? modal.ownCharacters.map(instance => {
+          const def = characterDefinition(instance.id);
+          const selected = modal.selectedCharacterUid === instance.uid;
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+        }).join("")
+      : '<div class="empty">没有可用的角色牌。</div>';
+    const targetButtons = modal.targets.map(target => {
+      const selected = modal.selectedTargetMemberId === target.memberId;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-event-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const canConfirm = modal.selectedCharacterUid && modal.selectedTargetMemberId;
+    choices = `
+      <div class="event-step"><div class="event-step-title">① 选择自己的角色</div>
+      <div class="target-list">${characterButtons}</div></div>
+      <div class="event-step"><div class="event-step-title">② 选择目标玩家</div>
+      <div class="target-list">${targetButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "event-response") {
+    const acceptButtons = !modal.mustAccept ? `<div class="modal-actions" style="justify-content:center">
+      <button class="btn ${modal.decision === "accept" ? "primary" : ""}" data-event-decision="accept">同意拼机</button>
+      <button class="btn coral ${modal.decision === "refuse" ? "primary" : ""}" data-event-decision="refuse">拒绝</button>
+    </div>` : "";
+    const showCharacters = modal.decision === "accept";
+    const characterButtons = !modal.myCharacters.length
+      ? '<div class="empty">没有可用的角色牌。</div>'
+      : modal.myCharacters.map(instance => {
+          const def = characterDefinition(instance.id);
+          const selected = modal.selectedCharacterUid === instance.uid;
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+        }).join("");
+    const canConfirm = modal.decision === "refuse" || (modal.decision === "accept" && modal.selectedCharacterUid);
+    choices = `
+      ${acceptButtons}
+      ${showCharacters ? `<div class="event-step"><div class="event-step-title">选择出战的角色</div><div class="target-list">${characterButtons}</div></div>` : ""}
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
   }
+  const canCloseModal = modal.kind !== "event-choose" && modal.kind !== "event-response";
   app.insertAdjacentHTML("beforeend", `<div class="modal"><div class="modal-box">
-    <div class="modal-head"><h3>${escapeHtml(modal.title)}</h3><button class="btn icon-only small" id="close-modal" title="关闭">${icon("x", 15)}</button></div>
+    <div class="modal-head"><h3>${escapeHtml(modal.title)}</h3>${canCloseModal ? `<button class="btn icon-only small" id="close-modal" title="关闭">${icon("x", 15)}</button>` : ""}</div>
     <div class="modal-desc">${escapeHtml(modal.description)}</div>${choices}
   </div></div>`);
-  document.getElementById("close-modal").onclick = () => { ui.modal = null; render(); };
+  document.getElementById("close-modal")?.addEventListener("click", () => { ui.modal = null; render(); });
   document.querySelectorAll("[data-select-target]").forEach(button => {
     button.onclick = () => {
       const targetMemberId = button.dataset.selectTarget;
@@ -4062,15 +4158,36 @@ function renderActionModal() {
       render();
     };
   });
+  document.querySelectorAll("[data-event-character]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.eventCharacter; render(); };
+  });
+  document.querySelectorAll("[data-event-target]").forEach(button => {
+    button.onclick = () => { modal.selectedTargetMemberId = button.dataset.eventTarget; render(); };
+  });
+  document.querySelectorAll("[data-event-decision]").forEach(button => {
+    button.onclick = () => { modal.decision = button.dataset.eventDecision; modal.selectedCharacterUid = null; render(); };
+  });
+  document.querySelectorAll("[data-event-resp-character]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.eventRespCharacter; render(); };
+  });
   document.getElementById("confirm-modal")?.addEventListener("click", () => {
     ui.modal = null;
-    if (modal.kind === "three-dimensions") {
+    if (modal.kind === "event-choose") {
+      sendGameAction("RESOLVE_EVENT", {
+        ownCharacterUid: modal.selectedCharacterUid,
+        targetMemberId: modal.selectedTargetMemberId
+      });
+    } else if (modal.kind === "event-response") {
+      const payload = { decision: modal.decision };
+      if (modal.decision === "accept") payload.targetCharacterUid = modal.selectedCharacterUid;
+      sendGameAction("RESOLVE_EVENT", payload);
+    } else if (modal.kind === "three-dimensions") {
       sendGameAction("ACTIVATE_CHARACTER", {
         characterId: modal.characterId,
         abilityId: modal.abilityId,
         dimensions: modal.selected
       });
-    } else {
+    } else if (modal.kind === "up-to-two-targets") {
       sendGameAction("ACTIVATE_CHARACTER", {
         characterId: modal.characterId,
         abilityId: modal.abilityId,
