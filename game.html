@@ -150,6 +150,19 @@
     font-size: 12px;
     line-height: 1.7;
   }
+  .entry-meta {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  .entry-links { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+  .entry-links a { color: var(--cyan); text-decoration: none; }
+  .entry-links a:hover { text-decoration: underline; }
+  .changelog summary { color: var(--text); cursor: pointer; font-weight: 800; }
+  .changelog ul { margin: 7px 0 0; padding-left: 18px; }
   .topbar {
     position: sticky;
     top: 0;
@@ -223,6 +236,7 @@
   .member-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
   .member-dot.offline { background: var(--muted); }
   .member-name { min-width: 0; flex: 1; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .member-tools { display: flex; align-items: center; gap: 5px; }
   .setting-row {
     display: flex;
     align-items: center;
@@ -597,6 +611,17 @@
     .dimension-panel { grid-template-columns: repeat(2, 1fr); }
     .join-row { grid-template-columns: 1fr; }
   }
+  .entry-links { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+  .entry-links a { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; color: var(--cyan); text-decoration: none; font-size: 12px; transition: .15s; }
+  .entry-links a:hover { border-color: var(--cyan); }
+  .entry-links a .link-desc { color: var(--muted); font-size: 11px; }
+  .entry-credits { margin-top: 14px; padding: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+  .entry-credits .credits-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .entry-credits .credits-list { font-size: 11px; color: var(--text); line-height: 1.8; }
+  .entry-dev { margin-top: 10px; font-size: 11px; color: var(--muted); text-align: center; }
+  .entry-changelog { margin-top: 10px; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+  .entry-changelog .changelog-title { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .entry-changelog ul { margin: 0; padding-left: 16px; font-size: 11px; color: var(--text); line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -605,7 +630,14 @@
 <script>
 "use strict";
 
-const VERSION = "v1.0.0";
+const VERSION = "v1.0.1";
+const CHANGELOG = Object.freeze([
+  "新增12张事件牌并重做原有3张事件牌",
+  "新增简单与普通难度机器人",
+  "新增随时转让房主与随机玩家顺序",
+  "首轮使用的角色决定谱面全部五维初始分数",
+  "完善联机同步、额外回合与特殊顺序规则"
+]);
 const ROOM_STATE = Object.freeze({
   WAITING: "WAITING",
   PLAYING: "PLAYING",
@@ -837,15 +869,63 @@ const SKILL_CARDS = Object.freeze([
 const EVENT_CARDS = Object.freeze([
   {
     id: "meeting", name: "面基", glyph: "users",
-    description: "你的三个谱师面基了！80%概率下，谱师的交流更加深入，你的谱面所有维度内容提高一点。20%下三个谱师会开始谈恋爱，此时你三回合无法发动角色牌技能。"
+    description: "你的谱师们面基了！90%概率下，你的谱面所有维度+1；否则你的角色牌3回合无法发动技能。"
   },
   {
     id: "recruit", name: "招安", glyph: "badge-check",
-    description: "不幸地，你手里综合水平最强的谱师被官方招安了。你的谱面获得五点“声誉”加成，但被招安的角色牌此后无法发动任何技能。"
+    description: "六维评分总和最高的角色被招安：声望+15，但该角色此后无法发动任何技能；并列时按角色名字典序决定。"
   },
   {
     id: "retire", name: "退坑", glyph: "lock-keyhole",
-    description: "你的现实生活太繁忙了，决定退坑臀自制。你的所有点数在此刻定格。"
+    description: "一个随机角色退坑，技能永久禁用。此后技能牌造成的点数效果按退坑角色数提升倍率：1个×1.5、2个×2、3个×2.5，以此类推。"
+  },
+  {
+    id: "new-draft", name: "新稿", glyph: "file-plus-2",
+    description: "配置水平、抽象动效、具象动效、创新程度各+1；后两回合所有角色牌无法发动技能。"
+  },
+  {
+    id: "inspiration", name: "灵光乍现！", glyph: "lightbulb",
+    description: "你的一个随机维度+8~15。"
+  },
+  {
+    id: "god-chart", name: "神谱发布！", glyph: "sparkles",
+    description: "所有玩家抽2张技能牌，不会触发事件牌。"
+  },
+  {
+    id: "pecjam", name: "PecJam", glyph: "refresh-cw",
+    description: "下一轮开始时，所有角色牌技能恢复可用。"
+  },
+  {
+    id: "maimai", name: "打舞萌", glyph: "disc-3",
+    description: "选择自己的1名角色和另一位玩家；对方必须选择1名角色拼机。双方配置水平+3，对方所选角色下一回合无法发动技能。"
+  },
+  {
+    id: "chunithm", name: "打中二", glyph: "piano",
+    description: "选择自己的1名角色和另一位玩家。对方同意时选择1名角色，双方配置与具象动效+5，且对方所选角色下一回合无法发动技能；拒绝时你的声望-5，配置与具象动效+5。"
+  },
+  {
+    id: "ongeki", name: "打音击", glyph: "gamepad-2",
+    description: "声望-1并选择自己的1名角色和另一位玩家。对方同意时选择1名角色，双方配置与具象动效+6，且对方所选角色下一回合无法发动技能；拒绝时你的声望再-5，配置与具象动效+6。"
+  },
+  {
+    id: "mind-shock", name: "心灵震慑", glyph: "brain",
+    description: "摸到后随机选择一名综合得分更高的玩家。若你至少有一个维度更高，你与对方最高分维度相同的维度+1；否则随机维度-1，且下一回合最多打出3张技能牌。没有更高分玩家时不产生效果。"
+  },
+  {
+    id: "rpe", name: "RPE崩了", glyph: "monitor-up",
+    description: "配置水平、抽象动效、具象动效中随机一项减半并向下取整；拥有PE谱师时无效。当前没有角色属于PE谱师。"
+  },
+  {
+    id: "clock-link", name: "时钟链接", glyph: "clock-3",
+    description: "所有玩家在各自的下一个轮次获得一个额外回合。"
+  },
+  {
+    id: "sun-tide", name: "凌日潮汐", glyph: "waves",
+    description: "从当前玩家起按逆序行动至1号玩家；1号玩家完成回合后恢复正常顺序。"
+  },
+  {
+    id: "tribunal", name: "众裁“区”", glyph: "gavel",
+    description: "仅在玩家数不少于4时进入牌堆；当前谱面综合评分最低的2位玩家各失去8点声望。"
   }
 ]);
 
@@ -868,6 +948,8 @@ const ui = {
   pendingAction: null,
   pendingActionTimer: null,
   syncTimer: null,
+  botTimer: null,
+  eventChoice: null,
   joinResolver: null,
   migrationTimer: null,
   hostLostAt: 0,
@@ -882,7 +964,7 @@ const room = {
   hostId: "",
   isHost: false,
   lifecycle: ROOM_STATE.WAITING,
-  settings: { totalRounds: 10 },
+  settings: { totalRounds: 10, botDifficulty: "simple" },
   members: [],
   transport: null
 };
@@ -935,7 +1017,7 @@ function totalScore(player) {
     score += (player.scores.abstract + player.scores.concrete) * .075;
   }
   score += player.reputation;
-  if (player.storyboard) score += 5;
+  if (player.storyboard) score += player.storyboardBonus || 5;
   score += player.settlementPenalty || 0;
   return roundScore(score);
 }
@@ -986,9 +1068,10 @@ function appendLog(text, type = "normal") {
 }
 
 function createDeck() {
+  const events = EVENT_CARDS.filter(card => card.id !== "tribunal" || roomPlayers().filter(member => member.connected).length >= 4);
   return shuffle([
     ...SKILL_CARDS.map(card => createCard("skill", card.id)),
-    ...EVENT_CARDS.map(card => createCard("event", card.id))
+    ...events.map(card => createCard("event", card.id))
   ]);
 }
 
@@ -998,6 +1081,7 @@ function createCard(type, cardId) {
 
 function createGameState(members, totalRounds) {
   const activeMembers = members.filter(member => !member.spectator && member.connected);
+  const orderedMembers = shuffle([...activeMembers]);
   return {
     phase: GAME_PHASE.DRAFT,
     totalRounds,
@@ -1010,9 +1094,12 @@ function createGameState(members, totalRounds) {
       usedAbilityIds: [],
       number: 0
     },
-    players: activeMembers.map(member => ({
+    players: orderedMembers.map(member => ({
       memberId: member.id,
       name: member.name,
+      isBot: Boolean(member.isBot),
+      difficulty: member.difficulty || "simple",
+      aiStrategy: member.aiStrategy || randomItem(["config", "motion", "innovation", "selection"]),
       hand: [],
       handCount: 0,
       characters: [],
@@ -1023,7 +1110,14 @@ function createGameState(members, totalRounds) {
       disableAllSkillTurns: 0,
       disableUntilOwnTurn: false,
       firstRoundSkillUsed: false,
+      retiredCharacterCount: 0,
+      pendingDisableCharacterTurns: 0,
+      pendingSkillCardLimit: null,
+      skillCardLimit: null,
+      extraTurnCredits: 0,
+      extraTurnEligibleAfter: null,
       storyboard: false,
+      storyboardBonus: 0,
       frozen: false,
       frozenScore: null,
       commissionLocked: false,
@@ -1050,6 +1144,9 @@ function createGameState(members, totalRounds) {
     discard: [],
     log: [],
     ranking: [],
+    pendingEvent: null,
+    turnDirection: 1,
+    pecJamRestoreRound: null,
     sequence: 0,
     effectDepth: 0,
     createdAt: Date.now()
@@ -1104,6 +1201,10 @@ function gainReputation(playerIndex, amount, options = {}) {
   return player.reputation - before;
 }
 
+function skillCardPointMultiplier(player) {
+  return 1 + (player?.retiredCharacterCount || 0) * .5;
+}
+
 function applyScoreChange(playerIndex, dimension, requestedAmount, context = {}) {
   const player = game.players[playerIndex];
   if (!player || !DIMENSIONS.includes(dimension) || !requestedAmount || player.frozen || player.commissionLocked) return 0;
@@ -1111,6 +1212,10 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
   if (game.effectDepth > 40) return 0;
 
   let amount = requestedAmount;
+  if (context.fromSkillCard) {
+    const source = game.players[context.sourcePlayerIndex ?? playerIndex];
+    amount *= skillCardPointMultiplier(source);
+  }
   if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
     amount = Math.floor(amount * .5);
   }
@@ -1246,6 +1351,58 @@ function runCrossingPassives(playerIndex, dimension, beforeAll) {
   }
 }
 
+function characterEntryByUid(uid) {
+  for (let playerIndex = 0; playerIndex < game.players.length; playerIndex++) {
+    const player = game.players[playerIndex];
+    const characterIndex = player.characters.findIndex(character => character.uid === uid);
+    if (characterIndex >= 0) {
+      return {
+        player,
+        playerIndex,
+        character: player.characters[characterIndex],
+        characterIndex
+      };
+    }
+  }
+  return null;
+}
+
+function disableRandomCharacterPermanently(playerIndex, eventName) {
+  const player = game.players[playerIndex];
+  const available = player?.characters.filter(character => !character.permanentlyDisabled) || [];
+  if (!available.length) {
+    appendLog(`${player?.name || "玩家"} 触发「${eventName}」，但没有可退坑的角色。`, "event");
+    return null;
+  }
+  const character = randomItem(available);
+  character.permanentlyDisabled = true;
+  appendLog(`${player.name} 触发「${eventName}」：${characterDefinition(character.id).name}退坑，技能永久失效。`, "event");
+  return character;
+}
+
+function triggerCanadaEventPassive() {
+  game.players.forEach((owner, ownerIndex) => {
+    if (!ownsCharacter(owner, "canada-goose")) return;
+    const dimension = randomDimension(true);
+    applyScoreChange(ownerIndex, dimension, 8, {
+      sourcePlayerIndex: ownerIndex,
+      allowSelectionChange: true
+    });
+    appendLog(`${owner.name} 因事件牌发动，${DIMENSION_LABELS[dimension]}+8。`, "effect");
+  });
+}
+
+function createPendingEvent(eventId, actorIndex, stage = "choose") {
+  const actor = game.players[actorIndex];
+  game.pendingEvent = {
+    id: `pending_${cryptoRandom(8)}`,
+    eventId,
+    actorIndex,
+    stage,
+    responderMemberId: actor.memberId
+  };
+}
+
 function resolveEvent(playerIndex, card) {
   const player = game.players[playerIndex];
   const event = eventDefinition(card.cardId);
@@ -1254,7 +1411,7 @@ function resolveEvent(playerIndex, card) {
   if (ownsCharacter(player, "cherry")) {
     appendLog(`${player.name} 的“樱桃喝酒人”使事件牌「${event.name}」不产生效果。`, "event");
   } else if (event.id === "meeting") {
-    if (Math.random() < .8) {
+    if (Math.random() < .9) {
       DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 1, {
         sourcePlayerIndex: playerIndex,
         allowSelectionChange: true
@@ -1268,33 +1425,167 @@ function resolveEvent(playerIndex, card) {
     const available = player.characters.filter(instance => !instance.permanentlyDisabled);
     if (available.length) {
       const strongest = available
-        .map(instance => ({ instance, value: CHARACTER_STATS.reduce((sum, stat) => sum + characterDefinition(instance.id).stats[stat], 0) }))
-        .sort((a, b) => b.value - a.value)[0].instance;
+        .map(instance => ({
+          instance,
+          definition: characterDefinition(instance.id),
+          value: CHARACTER_STATS.reduce((sum, stat) => sum + characterDefinition(instance.id).stats[stat], 0)
+        }))
+        .sort((a, b) => b.value - a.value || a.definition.name.localeCompare(b.definition.name, "zh-CN"))[0].instance;
       strongest.permanentlyDisabled = true;
-      gainReputation(playerIndex, 5);
-      appendLog(`${player.name} 触发「招安」：${characterDefinition(strongest.id).name}永久失效，声望+5。`, "event");
+      gainReputation(playerIndex, 15);
+      appendLog(`${player.name} 触发「招安」：${characterDefinition(strongest.id).name}永久失效，声望+15。`, "event");
     } else {
-      gainReputation(playerIndex, 5);
-      appendLog(`${player.name} 触发「招安」：声望+5。`, "event");
+      gainReputation(playerIndex, 15);
+      appendLog(`${player.name} 触发「招安」：没有可禁用的角色，声望+15。`, "event");
     }
   } else if (event.id === "retire") {
-    player.frozenScore = totalScore(player);
-    player.frozen = true;
-    appendLog(`${player.name} 触发「退坑」：所有点数定格。`, "event");
-  }
-
-  game.players.forEach((owner, ownerIndex) => {
-    if (!ownsCharacter(owner, "canada-goose")) return;
+    if (disableRandomCharacterPermanently(playerIndex, "退坑")) {
+      player.retiredCharacterCount++;
+      appendLog(`${player.name} 的技能牌点数效果变为×${skillCardPointMultiplier(player)}。`, "effect");
+    }
+  } else if (event.id === "new-draft") {
+    ["config", "abstract", "concrete", "innovation"].forEach(dimension => {
+      applyScoreChange(playerIndex, dimension, 1, { sourcePlayerIndex: playerIndex });
+    });
+    player.pendingDisableCharacterTurns = Math.max(player.pendingDisableCharacterTurns, 2);
+    appendLog(`${player.name} 触发「新稿」：四个维度各+1，后两回合角色技能禁用。`, "event");
+  } else if (event.id === "inspiration") {
     const dimension = randomDimension(true);
-    applyScoreChange(ownerIndex, dimension, 8, {
-      sourcePlayerIndex: ownerIndex,
+    const amount = 8 + Math.floor(Math.random() * 8);
+    applyScoreChange(playerIndex, dimension, amount, {
+      sourcePlayerIndex: playerIndex,
       allowSelectionChange: true
     });
-    appendLog(`${owner.name} 因事件牌发动，${DIMENSION_LABELS[dimension]}+8。`, "effect");
-  });
+    appendLog(`${player.name} 触发「灵光乍现！」：${DIMENSION_LABELS[dimension]}+${amount}。`, "event");
+  } else if (event.id === "god-chart") {
+    game.players.forEach((_, index) => drawCards(index, 2, true));
+    appendLog(`${player.name} 触发「神谱发布！」：所有玩家抽2张技能牌。`, "event");
+  } else if (event.id === "pecjam") {
+    game.pecJamRestoreRound = game.round + 1;
+    appendLog(`${player.name} 触发「PecJam」：下一轮所有角色牌恢复可用。`, "event");
+  } else if (event.id === "maimai" || event.id === "chunithm" || event.id === "ongeki") {
+    if (event.id === "ongeki") gainReputation(playerIndex, -1);
+    createPendingEvent(event.id, playerIndex);
+    appendLog(`${player.name} 触发「${event.name}」，等待选择。`, "event");
+  } else if (event.id === "mind-shock") {
+    const higherPlayers = game.players
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(entry => entry.index !== playerIndex && totalScore(entry.candidate) > totalScore(player));
+    if (!higherPlayers.length) {
+      appendLog(`${player.name} 触发「心灵震慑」，但场上没有综合得分更高的玩家。`, "event");
+    } else {
+      const targetEntry = randomItem(higherPlayers);
+      const target = targetEntry.candidate;
+      const hasHigherDimension = DIMENSIONS.some(dimension => player.scores[dimension] > target.scores[dimension]);
+      if (hasHigherDimension) {
+        const targetHighest = Math.max(...DIMENSIONS.map(dimension => target.scores[dimension]));
+        const dimension = randomItem(DIMENSIONS.filter(item => target.scores[item] === targetHighest));
+        applyScoreChange(playerIndex, dimension, 1, {
+          sourcePlayerIndex: playerIndex,
+          allowSelectionChange: true
+        });
+        appendLog(`${player.name} 触发「心灵震慑」，与${target.name}比较后${DIMENSION_LABELS[dimension]}+1。`, "event");
+      } else {
+        const dimension = randomDimension(true);
+        applyScoreChange(playerIndex, dimension, -1, {
+          sourcePlayerIndex: playerIndex,
+          allowSelectionChange: true
+        });
+        player.pendingSkillCardLimit = 3;
+        appendLog(`${player.name} 触发「心灵震慑」，与${target.name}比较后${DIMENSION_LABELS[dimension]}-1，下回合最多打出3张技能牌。`, "event");
+      }
+    }
+  } else if (event.id === "rpe") {
+    const hasPeCharacter = player.characters.some(character => characterDefinition(character.id)?.isPE);
+    if (hasPeCharacter) {
+      appendLog(`${player.name} 的PE谱师使「RPE崩了」不产生效果。`, "event");
+    } else {
+      const dimension = randomItem(["config", "abstract", "concrete"]);
+      const nextValue = Math.floor(player.scores[dimension] / 2);
+      setScore(playerIndex, dimension, nextValue, { sourcePlayerIndex: playerIndex });
+      appendLog(`${player.name} 触发「RPE崩了」：${DIMENSION_LABELS[dimension]}减半至${nextValue}。`, "event");
+    }
+  } else if (event.id === "clock-link") {
+    game.players.forEach(target => {
+      target.extraTurnCredits++;
+      if (target.extraTurnEligibleAfter == null) target.extraTurnEligibleAfter = game.turn.number;
+    });
+    appendLog(`${player.name} 触发「时钟链接！」：所有玩家的下一个回合获得额外回合。`, "event");
+  } else if (event.id === "sun-tide") {
+    game.turnDirection = -1;
+    appendLog(`${player.name} 触发「凌日潮汐」：行动顺序逆转至1号玩家。`, "event");
+  } else if (event.id === "tribunal") {
+    const lowestPlayers = shuffle(game.players.map((candidate, index) => ({
+      candidate,
+      index,
+      score: totalScore(candidate)
+    }))).sort((a, b) => a.score - b.score).slice(0, 2);
+    lowestPlayers.forEach(entry => gainReputation(entry.index, -8));
+    appendLog(`${player.name} 触发「众裁“区”」：${lowestPlayers.map(entry => entry.candidate.name).join("、")}声望-8。`, "event");
+  }
 
+  triggerCanadaEventPassive();
   game.deck.push(card);
   shuffle(game.deck);
+}
+
+function resolvePendingEvent(memberId, payload = {}) {
+  const pending = game.pendingEvent;
+  if (!pending || pending.responderMemberId !== memberId) return fail("当前没有需要你处理的事件");
+  const actor = game.players[pending.actorIndex];
+  if (!actor) return fail("事件发起玩家不存在");
+
+  if (pending.stage === "choose") {
+    const ownEntry = characterEntryByUid(payload.ownCharacterUid);
+    if (!ownEntry || ownEntry.playerIndex !== pending.actorIndex) return fail("请选择自己的角色牌");
+    const targetPlayerIndex = game.players.findIndex(candidate =>
+      candidate.memberId === payload.targetMemberId &&
+      candidate.memberId !== actor.memberId
+    );
+    const target = game.players[targetPlayerIndex];
+    if (!target) return fail("请选择另一位玩家");
+    game.pendingEvent = {
+      ...pending,
+      stage: "response",
+      responderMemberId: target.memberId,
+      ownCharacterUid: ownEntry.character.uid,
+      targetPlayerIndex
+    };
+    appendLog(`${target.name} 需要响应「${eventDefinition(pending.eventId).name}」。`, "event");
+    return ok();
+  }
+
+  if (pending.stage === "response") {
+    const target = game.players[pending.targetPlayerIndex];
+    if (!target || target.memberId !== memberId) return fail("目标玩家不存在");
+    const mustAccept = pending.eventId === "maimai";
+    const accepted = mustAccept || payload.decision === "accept";
+    if (!accepted && payload.decision !== "refuse") return fail("请选择同意或拒绝");
+    if (!accepted) {
+      gainReputation(pending.actorIndex, -5);
+      const points = pending.eventId === "chunithm" ? 5 : 6;
+      applyScoreChange(pending.actorIndex, "config", points, { sourcePlayerIndex: pending.actorIndex });
+      applyScoreChange(pending.actorIndex, "concrete", points, { sourcePlayerIndex: pending.actorIndex });
+      appendLog(`${target.name} 拒绝「${eventDefinition(pending.eventId).name}」：${actor.name}声望-5，配置与具象动效+${points}。`, "event");
+      game.pendingEvent = null;
+      return ok();
+    }
+    const targetEntry = characterEntryByUid(payload.targetCharacterUid);
+    if (!targetEntry || targetEntry.playerIndex !== pending.targetPlayerIndex) return fail("请选择自己的角色牌");
+    const points = pending.eventId === "maimai" ? 3 : pending.eventId === "chunithm" ? 5 : 6;
+    applyScoreChange(pending.actorIndex, "config", points, { sourcePlayerIndex: pending.actorIndex });
+    applyScoreChange(pending.targetPlayerIndex, "config", points, { sourcePlayerIndex: pending.actorIndex });
+    if (pending.eventId !== "maimai") {
+      applyScoreChange(pending.actorIndex, "concrete", points, { sourcePlayerIndex: pending.actorIndex });
+      applyScoreChange(pending.targetPlayerIndex, "concrete", points, { sourcePlayerIndex: pending.actorIndex });
+    }
+    targetEntry.character.disabledTurns = Math.max(targetEntry.character.disabledTurns, 1);
+    appendLog(`${target.name} 完成「${eventDefinition(pending.eventId).name}」：双方${pending.eventId === "maimai" ? "配置" : "配置与具象动效"}+${points}。`, "event");
+    game.pendingEvent = null;
+    return ok();
+  }
+
+  return fail("事件状态无效");
 }
 
 function drawSkillFromPool(playerIndex) {
@@ -1366,6 +1657,21 @@ function dealInitialHands() {
 function beginTurn() {
   const player = currentPlayer();
   if (!player) return;
+  if (game.pecJamRestoreRound != null && game.round >= game.pecJamRestoreRound) {
+    game.players.forEach(target => {
+      target.disableCharacterTurns = 0;
+      target.disableAllSkillTurns = 0;
+      target.disableUntilOwnTurn = false;
+      target.characters.forEach(character => {
+        character.disabledTurns = 0;
+        Object.keys(character.cooldowns).forEach(abilityId => {
+          character.cooldowns[abilityId] = 0;
+        });
+      });
+    });
+    game.pecJamRestoreRound = null;
+    appendLog("PecJam生效：所有角色牌的冷却和临时禁用状态已清除。", "event");
+  }
   player.characters.forEach(character => {
     Object.keys(character.cooldowns).forEach(abilityId => {
       if (character.cooldowns[abilityId] > 0) character.cooldowns[abilityId]--;
@@ -1376,6 +1682,8 @@ function beginTurn() {
   player.counters.jinyeDraws = 0;
   player.counters.naoguiTriggered = false;
   player.counters.twoThreeEightLoss = 0;
+  player.skillCardLimit = player.pendingSkillCardLimit;
+  player.pendingSkillCardLimit = null;
   if (player.commissionLockAtRound != null && game.round >= player.commissionLockAtRound) {
     player.commissionLocked = true;
   }
@@ -1383,6 +1691,8 @@ function beginTurn() {
     hasDrawn: false,
     skillCardsPlayed: 0,
     usedAbilityIds: [],
+    botSkillCardUsed: false,
+    botAbilityUsed: false,
     number: game.turn.number + 1
   };
   appendLog(`轮到 ${player.name} 行动。`);
@@ -1484,13 +1794,11 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
 
   if (game.round === 1) {
-    setScore(playerIndex, "selection", characterSelection(definition), {
-      sourcePlayerIndex: playerIndex,
-      allowSelectionChange: true,
-      skipCrossing: true
+    DIMENSIONS.forEach(dimension => {
+      player.scores[dimension] = definition.stats[dimension];
     });
     player.firstRoundSkillUsed = true;
-    appendLog(`${player.name} 以「${definition.name}」确定初始选曲品味为${characterSelection(definition)}。`, "effect");
+    appendLog(`${player.name} 以「${definition.name}」确定谱面全部五维初始分数。`, "effect");
   }
 
   if (ability.id === "ftayo-main") {
@@ -1628,6 +1936,9 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   if (!ownTurn) return fail("该牌只能在自己的回合打出");
   if (game.round === 1) return fail("第1轮不能使用技能牌");
   if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
+  if (player.skillCardLimit != null && game.turn.skillCardsPlayed >= player.skillCardLimit) {
+    return fail(`本回合最多打出${player.skillCardLimit}张技能牌`);
+  }
 
   let target = null;
   if (definition.target === "opponent") {
@@ -1653,6 +1964,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 1);
   } else if (definition.id === "fge") {
     player.storyboard = true;
+    player.storyboardBonus = Math.max(player.storyboardBonus, 5 * skillCardPointMultiplier(player));
   }
 
   appendLog(`${player.name} 打出「${definition.name}」。`, "effect");
@@ -1688,7 +2000,10 @@ function executeReviewVote(playerIndex, payload = {}) {
   const target = game.players[targetIndex];
   if (!target) return fail("目标不存在");
   if (payload.vote === "red") {
-    applyScoreChange(targetIndex, "config", 10, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(targetIndex, "config", 10, {
+      sourcePlayerIndex: playerIndex,
+      fromSkillCard: true
+    });
     target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 3);
     appendLog(`${player.name} 向${target.name}送出红票：配置水平+10，连续3回合不可发动技能。`, "effect");
   } else if (payload.vote === "green") {
@@ -1711,18 +2026,46 @@ function endTurn(playerIndex) {
   if (player.disableCharacterTurns > 0) player.disableCharacterTurns--;
   if (player.disableAllSkillTurns > 0) player.disableAllSkillTurns--;
   if (player.reviewTurns > 0) player.reviewTurns--;
+  player.skillCardLimit = null;
   player.characters.forEach(character => {
     if (character.disabledTurns > 0) character.disabledTurns--;
   });
-  game.currentPlayerIndex++;
-  if (game.currentPlayerIndex >= game.players.length) {
-    game.currentPlayerIndex = 0;
-    game.round++;
-    if (game.round > game.totalRounds) {
-      settleGame();
-      return ok();
+  if (player.pendingDisableCharacterTurns > 0) {
+    player.disableCharacterTurns = Math.max(player.disableCharacterTurns, player.pendingDisableCharacterTurns);
+    player.pendingDisableCharacterTurns = 0;
+  }
+
+  if (
+    player.extraTurnCredits > 0 &&
+    player.extraTurnEligibleAfter != null &&
+    game.turn.number > player.extraTurnEligibleAfter
+  ) {
+    player.extraTurnCredits--;
+    if (player.extraTurnCredits <= 0) player.extraTurnEligibleAfter = null;
+    appendLog(`${player.name} 获得一个额外回合。`, "event");
+    beginTurn();
+    return ok();
+  }
+
+  if (game.turnDirection === -1) {
+    if (game.currentPlayerIndex > 0) {
+      game.currentPlayerIndex--;
+    } else {
+      game.turnDirection = 1;
+      game.currentPlayerIndex = game.players.length > 1 ? 1 : 0;
+      appendLog("凌日潮汐结束，恢复正常行动顺序。", "event");
     }
-    appendLog(`第${game.round}轮开始。`, "event");
+  } else {
+    game.currentPlayerIndex++;
+    if (game.currentPlayerIndex >= game.players.length) {
+      game.currentPlayerIndex = 0;
+      game.round++;
+      if (game.round > game.totalRounds) {
+        settleGame();
+        return ok();
+      }
+      appendLog(`第${game.round}轮开始。`, "event");
+    }
   }
   beginTurn();
   return ok();
@@ -1778,7 +2121,12 @@ function hostDispatch(memberId, action, payload = {}, requestId = "") {
   const ownTurn = game.currentPlayerIndex === playerIndex;
   let result = fail("未知操作");
 
-  if (action === "DRAFT_BUY") {
+  if (game.pendingEvent && action !== "RESOLVE_EVENT") {
+    return fail("请先完成当前事件牌结算");
+  }
+  if (action === "RESOLVE_EVENT") {
+    result = resolvePendingEvent(memberId, payload);
+  } else if (action === "DRAFT_BUY") {
     if (game.phase !== GAME_PHASE.DRAFT || !ownTurn) return fail("还没轮到你购置");
     result = buyCharacter(playerIndex, payload.characterId);
   } else if (action === "DRAFT_DONE") {
@@ -1809,6 +2157,184 @@ function hostDispatch(memberId, action, payload = {}, requestId = "") {
     syncAll(memberId, requestId);
   }
   return result;
+}
+
+function botTargetIndex(playerIndex) {
+  const candidates = game.players
+    .map((player, index) => ({ player, index }))
+    .filter(entry => entry.index !== playerIndex);
+  if (!candidates.length) return -1;
+  const bot = game.players[playerIndex];
+  if (bot.difficulty === "normal") {
+    candidates.sort((a, b) => totalScore(b.player) - totalScore(a.player));
+    return candidates[0].index;
+  }
+  return randomItem(candidates).index;
+}
+
+function botAbilityPayload(playerIndex, instance, ability) {
+  if (ability.choice === "three-dimensions") {
+    return { dimensions: shuffle([...CHANGEABLE_DIMENSIONS]).slice(0, 3) };
+  }
+  if (ability.choice === "motion-distribution") {
+    return { abstractPoints: Math.floor(Math.random() * 6) };
+  }
+  if (ability.choice === "up-to-two-targets") {
+    const targets = game.players
+      .filter((_, index) => index !== playerIndex)
+      .sort((a, b) => totalScore(b) - totalScore(a))
+      .slice(0, 2)
+      .map(player => player.memberId);
+    return { targetMemberIds: targets };
+  }
+  if (ability.choice === "opponent") {
+    const targetIndex = botTargetIndex(playerIndex);
+    return { targetMemberId: game.players[targetIndex]?.memberId };
+  }
+  return {};
+}
+
+function botCharacterChoice(playerIndex) {
+  const player = game.players[playerIndex];
+  const affordable = CHARACTERS.filter(character =>
+    !player.characters.some(instance => instance.id === character.id) &&
+    RARITY[character.rarity].price <= player.funds
+  );
+  if (!affordable.length) return null;
+  if (player.difficulty === "simple") {
+    const highestPrice = Math.max(...affordable.map(character => RARITY[character.rarity].price));
+    return randomItem(affordable.filter(character => RARITY[character.rarity].price === highestPrice));
+  }
+  const strategyStats = {
+    config: ["config", "stamina"],
+    motion: ["abstract", "concrete"],
+    innovation: ["innovation", "stamina"],
+    selection: ["selection", "config"]
+  }[player.aiStrategy] || ["config", "innovation"];
+  return affordable.sort((a, b) => {
+    const scoreA = strategyStats.reduce((sum, stat) => sum + a.stats[stat], 0);
+    const scoreB = strategyStats.reduce((sum, stat) => sum + b.stats[stat], 0);
+    return scoreB - scoreA || RARITY[b.rarity].price - RARITY[a.rarity].price;
+  })[0];
+}
+
+function resolveBotEvent(playerIndex) {
+  const pending = game.pendingEvent;
+  const player = game.players[playerIndex];
+  if (!pending || pending.responderMemberId !== player.memberId) return fail("没有待处理事件");
+  if (pending.stage === "choose") {
+    const targetIndex = botTargetIndex(playerIndex);
+    return hostDispatch(player.memberId, "RESOLVE_EVENT", {
+      ownCharacterUid: randomItem(player.characters)?.uid,
+      targetMemberId: game.players[targetIndex]?.memberId
+    });
+  }
+  const targetCharacterUid = randomItem(player.characters)?.uid;
+  if (pending.eventId === "maimai") {
+    return hostDispatch(player.memberId, "RESOLVE_EVENT", { targetCharacterUid });
+  }
+  const decision = player.difficulty === "normal" || Math.random() < .65 ? "accept" : "refuse";
+  return hostDispatch(player.memberId, "RESOLVE_EVENT", {
+    decision,
+    targetCharacterUid
+  });
+}
+
+function performBotAction() {
+  ui.botTimer = null;
+  if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
+  const pendingBotIndex = game.pendingEvent
+    ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && player.isBot)
+    : -1;
+  if (pendingBotIndex >= 0) {
+    resolveBotEvent(pendingBotIndex);
+    return;
+  }
+  if (game.pendingEvent) return;
+
+  const playerIndex = game.currentPlayerIndex;
+  const player = game.players[playerIndex];
+  if (!player?.isBot) return;
+
+  if (game.phase === GAME_PHASE.DRAFT) {
+    const choice = botCharacterChoice(playerIndex);
+    hostDispatch(player.memberId, choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {});
+    return;
+  }
+
+  if (game.round === 1) {
+    if (!player.firstRoundSkillUsed) {
+      const choice = player.characters
+        .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
+        .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
+      if (choice) {
+        hostDispatch(player.memberId, "ACTIVATE_CHARACTER", {
+          characterId: choice.instance.id,
+          abilityId: choice.ability.id,
+          ...botAbilityPayload(playerIndex, choice.instance, choice.ability)
+        });
+        return;
+      }
+    }
+    hostDispatch(player.memberId, "END_TURN");
+    return;
+  }
+
+  if (!game.turn.hasDrawn) {
+    hostDispatch(player.memberId, "DRAW");
+    return;
+  }
+
+  if (player.reviewTurns > 0 && !player.reviewActionUsed && !isAllSkillBlocked(player)) {
+    const targetIndex = player.difficulty === "normal" ? botTargetIndex(playerIndex) : Math.floor(Math.random() * game.players.length);
+    hostDispatch(player.memberId, "REVIEW_VOTE", {
+      targetMemberId: game.players[targetIndex].memberId,
+      vote: player.difficulty === "normal" ? "red" : randomItem(["red", "green"])
+    });
+    return;
+  }
+
+  const abilityChoice = player.characters
+    .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
+    .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
+  if (abilityChoice) {
+    hostDispatch(player.memberId, "ACTIVATE_CHARACTER", {
+      characterId: abilityChoice.instance.id,
+      abilityId: abilityChoice.ability.id,
+      ...botAbilityPayload(playerIndex, abilityChoice.instance, abilityChoice.ability)
+    });
+    return;
+  }
+
+  const cardLimit = player.difficulty === "normal" ? 2 : 1;
+  if (game.turn.skillCardsPlayed < cardLimit && !isAllSkillBlocked(player)) {
+    const priorities = ["fge", "commission", "review", "drink"];
+    const card = [...player.hand].sort((a, b) =>
+      priorities.indexOf(a.cardId) - priorities.indexOf(b.cardId)
+    )[0];
+    if (card) {
+      const payload = { cardUid: card.uid };
+      if (skillDefinition(card.cardId)?.target === "opponent") {
+        payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
+      }
+      hostDispatch(player.memberId, "PLAY_CARD", payload);
+      return;
+    }
+  }
+  hostDispatch(player.memberId, "END_TURN");
+}
+
+function scheduleBotAction() {
+  clearTimeout(ui.botTimer);
+  ui.botTimer = null;
+  if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
+  const pendingResponder = game.pendingEvent
+    ? game.players.find(player => player.memberId === game.pendingEvent.responderMemberId)
+    : null;
+  const actor = pendingResponder || currentPlayer();
+  if (!actor?.isBot) return;
+  const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;
+  ui.botTimer = setTimeout(performBotAction, delay);
 }
 
 function publicGameFor(memberId) {
@@ -1871,13 +2397,14 @@ function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
     return;
   }
   room.members.forEach(member => {
-    if (member.id === room.myId || !member.connected) return;
+    if (member.id === room.myId || !member.connected || member.isBot) return;
     sendStateToPlayer(
       member.id,
       member.id === actorMemberId ? acknowledgedRequestId : ""
     );
   });
   render();
+  scheduleBotAction();
 }
 
 function sendWelcome(memberId) {
@@ -2462,6 +2989,7 @@ function render() {
 }
 
 function renderEntry() {
+  const creditsList = ["XerdouS", "Stic3r", "大黄金史莱姆", "zmh054", "中微子", "某轩呦", "duckshout", "白泽", "Ikigai", "O.K.", "1116", "SnowPainted"];
   app.innerHTML = `
     <div class="entry-shell">
       <div class="brand">
@@ -2483,6 +3011,29 @@ function renderEntry() {
         <div class="status-message ${ui.messageError ? "error" : ""}" role="status">${escapeHtml(ui.message)}</div>
         <div class="brief">房间人数大于1人即可开始。游戏开始后加入的成员只能观战，等本局结束后再加入玩家列表。</div>
       </section>
+      <div class="entry-links">
+        <a href="https://docs.qq.com/doc/DTHZndEh2RG1hTGJu?no_promotion=1&is_blank_or_template=blank" target="_blank" rel="noopener">
+          ${icon("file-text", 14)} <span>共享开发文档</span>
+          <span class="link-desc">— 查看介绍、发表建议、DIY卡牌</span>
+        </a>
+        <a href="https://docs.qq.com/form/page/DS1J6dmxtcGxIYWFS" target="_blank" rel="noopener">
+          ${icon("bug", 14)} <span>Bug 反馈表</span>
+          <span class="link-desc">— 发现Bug请填写收集表</span>
+        </a>
+        <a href="https://docs.qq.com/sheet/DS3VqeGNLc1dkamRT" target="_blank" rel="noopener">
+          ${icon("clipboard-list", 14)} <span>工单处理结果</span>
+          <span class="link-desc">— 查看Bug修复进度</span>
+        </a>
+      </div>
+      <div class="entry-changelog">
+        <div class="changelog-title">${icon("list", 12)} 更新日志</div>
+        <ul>${CHANGELOG.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </div>
+      <div class="entry-credits">
+        <div class="credits-title">Credits</div>
+        <div class="credits-list">${creditsList.join(" · ")}</div>
+      </div>
+      <div class="entry-dev">Developed by LogicM with TRAE AI</div>
     </div>`;
   const nameInput = document.getElementById("player-name");
   document.getElementById("create-room").onclick = () => {
