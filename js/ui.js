@@ -509,6 +509,31 @@ function openCardAction(cardUid) {
   const card = me?.hand.find(item => item.uid === cardUid);
   const definition = skillDefinition(card?.cardId);
   if (!card || !definition) return;
+  const mode = definition.targetMode;
+  if (!mode || mode === TARGET_MODE.NONE) {
+    return sendGameAction("PLAY_CARD", { cardUid });
+  }
+  if (mode === TARGET_MODE.PLAYER) {
+    const targets = game.players.filter(player => player.memberId !== me.memberId);
+    ui.modal = { kind: "skill-target-player", cardUid, title: definition.name, description: definition.description, targets };
+    return render();
+  }
+  if (mode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+    const targets = game.players.filter(player => player.memberId !== me.memberId);
+    ui.modal = { kind: "skill-player-dimension", cardUid, title: definition.name, description: definition.description, targets, selectedTarget: null, selectedDimension: null };
+    return render();
+  }
+  if (mode === TARGET_MODE.OWN_AND_OPPONENT_CHARACTERS) {
+    const ownCharacters = me.characters;
+    const opponentCharacters = [];
+    game.players.forEach(p => {
+      if (p.memberId !== me.memberId) {
+        p.characters.forEach(c => opponentCharacters.push({ ...c, ownerName: p.name }));
+      }
+    });
+    ui.modal = { kind: "skill-own-opponent-characters", cardUid, title: definition.name, description: definition.description, ownCharacters, opponentCharacters, selectedOwnUid: null, selectedOpponentUids: [] };
+    return render();
+  }
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
   const targets = game.players.filter(player => player.memberId !== me.memberId);
   ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
@@ -565,7 +590,7 @@ function openReviewAction() {
 function renderActionModal() {
   const modal = ui.modal;
   let choices = "";
-  if (modal.kind === "target-card" || modal.kind === "target-ability") {
+  if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
     choices = `<div class="target-list">
@@ -580,6 +605,35 @@ function renderActionModal() {
   } else if (modal.kind === "up-to-two-targets") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn ${modal.selected.includes(target.memberId) ? "selected" : ""}" data-toggle-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${modal.selected.includes(target.memberId) ? "已选" : "选择"}</span></button>`).join("")}</div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
+  } else if (modal.kind === "skill-player-dimension") {
+    const playerButtons = modal.targets.map(target => {
+      const selected = modal.selectedTarget === target.memberId;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-skill-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const dimensionButtons = CHANGEABLE_DIMENSIONS.map(dim => {
+      const selected = modal.selectedDimension === dim;
+      return `<button class="target-btn ${selected ? "selected" : ""}" ${modal.selectedTarget ? "" : "disabled"} data-skill-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const canConfirm = modal.selectedTarget && modal.selectedDimension;
+    choices = `<div class="event-step"><div class="event-step-title">① 选择目标玩家</div><div class="target-list">${playerButtons}</div></div>
+      <div class="event-step"><div class="event-step-title">② 选择属性</div><div class="target-list">${dimensionButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-own-opponent-characters") {
+    const ownButtons = modal.ownCharacters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedOwnUid === instance.uid;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-skill-own-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const opponentButtons = modal.opponentCharacters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedOpponentUids.includes(instance.uid);
+      const canSelect = modal.selectedOpponentUids.length < 3 || selected;
+      return `<button class="target-btn ${selected ? "selected" : ""}" ${canSelect ? "" : "disabled"} data-skill-opp-char="${instance.uid}"><span>${escapeHtml(def.name)} (${escapeHtml(instance.ownerName)})</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const canConfirm = modal.selectedOwnUid && modal.selectedOpponentUids.length >= 2 && modal.selectedOpponentUids.length <= 3;
+    choices = `<div class="event-step"><div class="event-step-title">① 选择自己的1张角色卡</div><div class="target-list">${ownButtons}</div></div>
+      <div class="event-step"><div class="event-step-title">② 选择其他玩家的2~3张角色卡</div><div class="target-list">${opponentButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   } else if (modal.kind === "event-choose") {
@@ -642,8 +696,38 @@ function renderActionModal() {
     button.onclick = () => {
       const targetMemberId = button.dataset.selectTarget;
       ui.modal = null;
-      if (modal.kind === "target-card") sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId });
+      if (modal.kind === "target-card" || modal.kind === "skill-target-player") sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId });
       else sendGameAction("ACTIVATE_CHARACTER", { characterId: modal.characterId, abilityId: modal.abilityId, targetMemberId });
+    };
+  });
+  document.querySelectorAll("[data-skill-target]").forEach(button => {
+    button.onclick = () => {
+      modal.selectedTarget = button.dataset.skillTarget;
+      modal.selectedDimension = null;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-skill-dimension]").forEach(button => {
+    button.onclick = () => {
+      modal.selectedDimension = button.dataset.skillDimension;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-skill-own-char]").forEach(button => {
+    button.onclick = () => {
+      modal.selectedOwnUid = button.dataset.skillOwnChar;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-skill-opp-char]").forEach(button => {
+    button.onclick = () => {
+      const uid = button.dataset.skillOppChar;
+      if (modal.selectedOpponentUids.includes(uid)) {
+        modal.selectedOpponentUids = modal.selectedOpponentUids.filter(u => u !== uid);
+      } else if (modal.selectedOpponentUids.length < 3) {
+        modal.selectedOpponentUids.push(uid);
+      }
+      render();
     };
   });
   document.querySelectorAll("[data-motion-points]").forEach(button => {
@@ -692,7 +776,11 @@ function renderActionModal() {
   });
   document.getElementById("confirm-modal")?.addEventListener("click", () => {
     ui.modal = null;
-    if (modal.kind === "event-choose") {
+    if (modal.kind === "skill-player-dimension") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId: modal.selectedTarget, dimension: modal.selectedDimension });
+    } else if (modal.kind === "skill-own-opponent-characters") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, ownCharacterUid: modal.selectedOwnUid, targetCharacterUids: modal.selectedOpponentUids });
+    } else if (modal.kind === "event-choose") {
       sendGameAction("RESOLVE_EVENT", {
         ownCharacterUid: modal.selectedCharacterUid,
         targetMemberId: modal.selectedTargetMemberId

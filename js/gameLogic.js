@@ -944,6 +944,33 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
       if (target.reviewTurns > 0) applyScoreChange(targetIndex, "abstract", -2, { sourcePlayerIndex: playerIndex });
     });
     appendLog(`${player.name} 发动热风小西八技能：评议玩家抽象动效-2。`, "effect");
+  } else if (ability.id === "liuzhizhi-main") {
+    const targetIndex = game.players.findIndex(candidate => candidate.memberId === payload.targetMemberId);
+    if (targetIndex < 0) return fail("目标不存在");
+    const targetPlayer = game.players[targetIndex];
+    const whiteGreenCards = targetPlayer.hand.filter(c => {
+      const def = skillDefinition(c.cardId);
+      return def && (def.rarity === "white" || def.rarity === "green");
+    });
+    if (!whiteGreenCards.length) return fail("目标没有白色或绿色手牌");
+    let selectedCard;
+    if (payload.targetCardUid) {
+      selectedCard = whiteGreenCards.find(c => c.uid === payload.targetCardUid);
+      if (!selectedCard) return fail("选择的卡牌不存在或不符合条件");
+    } else {
+      selectedCard = randomItem(whiteGreenCards);
+    }
+    const cardIdx = targetPlayer.hand.findIndex(c => c.uid === selectedCard.uid);
+    targetPlayer.hand.splice(cardIdx, 1);
+    targetPlayer.handCount = targetPlayer.hand.length;
+    player.hand.push(selectedCard);
+    player.handCount = player.hand.length;
+    const playResult = executeSkillCard(playerIndex, selectedCard.uid);
+    if (!playResult.ok) {
+      appendLog(`${player.name} 从${targetPlayer.name}获得「${skillDefinition(selectedCard.cardId).name}」但无法打出：${playResult.reason}`, "effect");
+    } else {
+      appendLog(`${player.name} 发动柳橙汁3743技能：从${targetPlayer.name}处获得并打出了「${skillDefinition(selectedCard.cardId).name}」。`, "effect");
+    }
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
@@ -951,6 +978,17 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   instance.uses[ability.id]++;
   game.turn.usedAbilityIds.push(`${instance.uid}:${ability.id}`);
   return ok();
+}
+
+function consumePlayedSkillCard(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return false;
+  const [card] = player.hand.splice(idx, 1);
+  game.discard.push(card);
+  player.handCount = player.hand.length;
+  game.turn.skillCardsPlayed++;
+  return true;
 }
 
 function executeSkillCard(playerIndex, cardUid, payload = {}) {
@@ -970,7 +1008,16 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
 
   let target = null;
   let targetIdx = -1;
-  if (definition.target === "opponent") {
+  const targetMode = definition.targetMode;
+  if (targetMode === TARGET_MODE.PLAYER || targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+    target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
+    if (!target) return fail("目标不存在");
+    if (target.memberId === player.memberId) return fail("必须选择其他玩家");
+    targetIdx = game.players.findIndex(candidate => candidate.memberId === target.memberId);
+    if (targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+      if (!payload.dimension || !CHANGEABLE_DIMENSIONS.includes(payload.dimension)) return fail("请选择一个属性");
+    }
+  } else if (!targetMode && definition.target === "opponent") {
     target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
     if (!target) return fail("目标不存在");
     if (target.memberId === player.memberId) return fail("必须选择其他玩家");
@@ -1001,7 +1048,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
     appendLog(`${player.name} 打出「学习」：${DIMENSION_LABELS[dim]}+5。`, "effect");
   } else if (definition.id === "effort") {
-    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => target.scores[d] > target.scores[best] ? d : best, "config");
+    const dim = payload.dimension;
     const amount = Math.floor(target.scores[dim] * skillCardPointMultiplier(player));
     applyScoreChange(playerIndex, dim, amount, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「发力」：从${target.name}的${DIMENSION_LABELS[dim]}获得${amount}点。`, "effect");
@@ -1084,23 +1131,19 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, "abstract", mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     if (ownsCharacter(player, "jinye")) applyScoreChange(playerIndex, "innovation", 2 * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "finish-chart") {
-    // 弃置本牌之外的全部手牌，每张 config+3
-    const others = player.hand.filter((_, i) => i !== cardIndex);
+    const others = player.hand.filter(c => c.uid !== cardUid);
     others.forEach(c => game.discard.push(c));
-    player.hand = [player.hand[cardIndex]];
-    cardIndex = 0;
+    player.hand = player.hand.filter(c => c.uid === cardUid);
     const mult = skillCardPointMultiplier(player);
     applyScoreChange(playerIndex, "config", 3 * others.length * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「写完了」：弃置${others.length}张牌，配置水平+${3 * others.length}。`, "effect");
   } else if (definition.id === "concise") {
     if (player.hand.length > 1) {
-      const keepCount = 1;
-      const others = player.hand.filter((_, i) => i !== cardIndex);
-      const toDiscard = others.slice(0, Math.max(0, others.length - keepCount));
+      const others = player.hand.filter(c => c.uid !== cardUid);
+      const toDiscard = others.slice(0, Math.max(0, others.length - 1));
       toDiscard.forEach(c => game.discard.push(c));
-      const kept = others.slice(Math.max(0, others.length - keepCount));
-      player.hand = [player.hand[cardIndex], ...kept];
-      cardIndex = 0;
+      const kept = others.slice(Math.max(0, others.length - 1));
+      player.hand = player.hand.filter(c => c.uid === cardUid).concat(kept);
       gainReputation(playerIndex, 3);
       appendLog(`${player.name} 打出「简洁逼」：弃置${toDiscard.length}张牌，声望+3。`, "effect");
     } else {
@@ -1178,12 +1221,12 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     setScore(targetIdx, "config", avg, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 对${target.name}打出「BPM轰炸」：配置水平调整为平均值${avg.toFixed(1)}。`, "effect");
   } else if (definition.id === "random-chart") {
-    const sourceDim = randomDimension(true);
-    const sourceValue = target.scores[sourceDim];
     DIMENSIONS.forEach(dim => {
-      if (dim !== sourceDim) setScore(targetIdx, dim, sourceValue, { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
+      const otherDims = DIMENSIONS.filter(d => d !== dim);
+      const sourceDim = randomItem(otherDims);
+      setScore(targetIdx, dim, target.scores[sourceDim], { sourcePlayerIndex: playerIndex, allowSelectionChange: dim !== "selection", fromSkillCard: true });
     });
-    appendLog(`${player.name} 对${target.name}打出「随机数写谱」：以${DIMENSION_LABELS[sourceDim]}(${sourceValue})替换所有其他维度。`, "effect");
+    appendLog(`${player.name} 对${target.name}打出「随机数写谱」：每维度独立随机映射。`, "effect");
   } else if (definition.id === "ibeam") {
     gainReputation(playerIndex, -2);
     applyScoreChange(targetIdx, "config", -12 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
@@ -1208,16 +1251,27 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     gainReputation(targetIdx, -8);
     applyScoreChange(playerIndex, "innovation", 4 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "tower-curse") {
-    // 自身1张角色卡 + 其他玩家2~3张角色卡，下回合禁用
-    const ownChar = randomItem(player.characters);
-    if (ownChar) ownChar.disabledTurns = Math.max(ownChar.disabledTurns, 1);
-    const otherChars = [];
-    game.players.forEach((p, i) => {
-      if (i !== playerIndex) p.characters.forEach(c => otherChars.push(c));
-    });
-    const count = Math.min(2 + Math.floor(Math.random() * 2), otherChars.length);
-    shuffle(otherChars).slice(0, count).forEach(c => { c.disabledTurns = Math.max(c.disabledTurns, 1); });
-    appendLog(`${player.name} 打出「塔之诅咒」：禁用自身1张+其他玩家${count}张角色卡技能。`, "effect");
+    const ownChar = player.characters.find(c => c.uid === payload.ownCharacterUid);
+    if (!ownChar) return fail("请选择自己的1张角色卡");
+    const targetUids = Array.isArray(payload.targetCharacterUids) ? payload.targetCharacterUids : [];
+    if (targetUids.length < 2 || targetUids.length > 3) return fail("需选择2~3张其他玩家角色卡");
+    const targetChars = [];
+    const seen = new Set();
+    for (const uid of targetUids) {
+      if (seen.has(uid)) return fail("不能重复选择角色");
+      seen.add(uid);
+      let found = null;
+      for (let i = 0; i < game.players.length; i++) {
+        if (i === playerIndex) continue;
+        const c = game.players[i].characters.find(ch => ch.uid === uid);
+        if (c) { found = c; break; }
+      }
+      if (!found) return fail("目标角色不存在或不属于其他玩家");
+      targetChars.push(found);
+    }
+    ownChar.disabledTurns = Math.max(ownChar.disabledTurns, 1);
+    targetChars.forEach(c => { c.disabledTurns = Math.max(c.disabledTurns, 1); });
+    appendLog(`${player.name} 打出「塔之诅咒」：禁用自身1张+其他玩家${targetChars.length}张角色卡技能。`, "effect");
   } else if (definition.id === "one-unchanged") {
     const candidates = player.characters.filter(c => !c.permanentlyDisabled);
     if (!candidates.length) return fail("没有可恢复的角色");
@@ -1246,24 +1300,22 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     appendLog(`${player.name} 打出「混沌」：从牌堆顶抽3张牌。`, "effect");
   } else if (definition.id === "acrobatics") {
     drawCards(playerIndex, 3);
-    const others = player.hand.filter((_, i) => i !== cardIndex);
+    const others = player.hand.filter(c => c.uid !== cardUid);
     if (others.length) {
       const toRemove = randomItem(others);
       const removeIdx = player.hand.indexOf(toRemove);
       player.hand.splice(removeIdx, 1);
       game.discard.push(toRemove);
-      // 修正 cardIndex（如果移除在前面）
-      if (removeIdx < cardIndex) cardIndex--;
     }
     appendLog(`${player.name} 打出「杂技」：抽3弃1。`, "effect");
   } else if (definition.id === "remap") {
     const handSize = player.hand.length;
-    const others = player.hand.filter((_, i) => i !== cardIndex);
-    others.forEach(c => game.discard.push(c));
-    player.hand = [player.hand[cardIndex]];
-    cardIndex = 0;
+    player.hand.forEach(c => game.discard.push(c));
+    player.hand = [];
     drawCards(playerIndex, handSize + 1);
-    appendLog(`${player.name} 打出「Remap」：弃置${others.length}张，抽${handSize + 1}张。`, "effect");
+    player.handCount = player.hand.length;
+    game.turn.skillCardsPlayed++;
+    appendLog(`${player.name} 打出「Remap」：弃置${handSize}张，抽${handSize + 1}张。`, "effect");
   } else if (definition.id === "hasty-draft") {
     applyScoreChange(playerIndex, "config", -2, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     applyScoreChange(playerIndex, "abstract", -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
@@ -1272,11 +1324,10 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     appendLog(`${player.name} 打出「潦草急就」：配置-2/抽象-1/具象-1，抽5张牌。`, "effect");
   }
 
-  appendLog(`${player.name} 打出「${definition.name}」。`, "effect");
-  player.hand.splice(cardIndex, 1);
-  player.handCount = player.hand.length;
-  game.discard.push(card);
-  game.turn.skillCardsPlayed++;
+  if (definition.id !== "remap") {
+    appendLog(`${player.name} 打出「${definition.name}」。`, "effect");
+    if (!consumePlayedSkillCard(playerIndex, cardUid)) return fail("卡牌消耗失败");
+  }
   if (game.turn.skillCardsPlayed === 3 && ownsCharacter(player, "ziwei")) {
     drawCards(playerIndex, 1);
     appendLog(`${player.name} 在本回合打出第3张牌，抽1张牌。`, "effect");
@@ -1595,6 +1646,14 @@ function isAIActor(player) {
   return player?.isBot || player?.aiControlled;
 }
 
+const botContext = {
+  actionId: null,
+  playerId: null,
+  state: "IDLE",
+  committed: false,
+  startedAt: 0
+};
+
 function performBotAction() {
   ui.botTimer = null;
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
@@ -1611,80 +1670,116 @@ function performBotAction() {
   const player = game.players[playerIndex];
   if (!isAIActor(player)) return;
 
-  // 封装 hostDispatch：若操作失败则 fallback 到 END_TURN，防止 bot 永久卡死
-  const dispatch = (action, payload = {}) => {
-    const result = hostDispatch(player.memberId, action, payload, "", true);
-    if (!result.ok && action !== "END_TURN" && action !== "DRAFT_DONE") {
-      hostDispatch(player.memberId, "END_TURN", {}, "", true);
+  botContext.playerId = player.memberId;
+  botContext.state = "EXECUTING";
+  botContext.committed = false;
+  botContext.startedAt = Date.now();
+  botContext.actionId = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  try {
+    const dispatch = (action, payload = {}) => {
+      const result = hostDispatch(player.memberId, action, payload, "", true);
+      if (result.ok) {
+        botContext.committed = true;
+        botContext.state = "COMMITTED";
+      } else if (!result.ok && action !== "END_TURN" && action !== "DRAFT_DONE") {
+        console.log(`[BOT] action=${action} failed: ${result.reason}`);
+      }
+      return result;
+    };
+
+    if (game.phase === GAME_PHASE.DRAFT) {
+      const choice = botCharacterChoice(playerIndex);
+      dispatch(choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {});
+      return;
     }
-  };
 
-  if (game.phase === GAME_PHASE.DRAFT) {
-    const choice = botCharacterChoice(playerIndex);
-    dispatch(choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {});
-    return;
-  }
+    if (game.round === 1) {
+      if (!player.firstRoundSkillUsed) {
+        const choice = player.characters
+          .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
+          .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
+        if (choice) {
+          dispatch("ACTIVATE_CHARACTER", {
+            characterId: choice.instance.id,
+            abilityId: choice.ability.id,
+            ...botAbilityPayload(playerIndex, choice.instance, choice.ability)
+          });
+          return;
+        }
+      }
+      dispatch("END_TURN");
+      return;
+    }
 
-  if (game.round === 1) {
-    if (!player.firstRoundSkillUsed) {
-      const choice = player.characters
-        .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
-        .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
-      if (choice) {
-        dispatch("ACTIVATE_CHARACTER", {
-          characterId: choice.instance.id,
-          abilityId: choice.ability.id,
-          ...botAbilityPayload(playerIndex, choice.instance, choice.ability)
-        });
-        return;
+    if (!game.turn.hasDrawn) {
+      dispatch("DRAW");
+      return;
+    }
+
+    if (player.reviewTurns > 0 && !player.reviewActionUsed && !isAllSkillBlocked(player)) {
+      const targetIndex = player.difficulty === "normal" ? botTargetIndex(playerIndex) : Math.floor(Math.random() * game.players.length);
+      dispatch("REVIEW_VOTE", {
+        targetMemberId: game.players[targetIndex].memberId,
+        vote: player.difficulty === "normal" ? "red" : randomItem(["red", "green"])
+      });
+      return;
+    }
+
+    const abilityChoice = player.characters
+      .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
+      .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
+    if (abilityChoice) {
+      dispatch("ACTIVATE_CHARACTER", {
+        characterId: abilityChoice.instance.id,
+        abilityId: abilityChoice.ability.id,
+        ...botAbilityPayload(playerIndex, abilityChoice.instance, abilityChoice.ability)
+      });
+      return;
+    }
+
+    const cardLimit = player.difficulty === "normal" ? 2 : 1;
+    if (game.turn.skillCardsPlayed < cardLimit && !isAllSkillBlocked(player)) {
+      const priorityMap = { fge: 0, commission: 1, review: 2, drink: 3 };
+      const sortedHand = [...player.hand].sort((a, b) =>
+        (priorityMap[a.cardId] ?? 999) - (priorityMap[b.cardId] ?? 999)
+      );
+      for (const card of sortedHand) {
+        const payload = { cardUid: card.uid };
+        const def = skillDefinition(card.cardId);
+        if (def?.targetMode === TARGET_MODE.PLAYER || def?.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+          payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
+          if (def.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+            payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+          }
+        } else if (def?.target === "opponent") {
+          payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
+        }
+        const result = dispatch("PLAY_CARD", payload);
+        if (result.ok) return;
+        if (botContext.committed) return;
       }
     }
     dispatch("END_TURN");
-    return;
-  }
-
-  if (!game.turn.hasDrawn) {
-    dispatch("DRAW");
-    return;
-  }
-
-  if (player.reviewTurns > 0 && !player.reviewActionUsed && !isAllSkillBlocked(player)) {
-    const targetIndex = player.difficulty === "normal" ? botTargetIndex(playerIndex) : Math.floor(Math.random() * game.players.length);
-    dispatch("REVIEW_VOTE", {
-      targetMemberId: game.players[targetIndex].memberId,
-      vote: player.difficulty === "normal" ? "red" : randomItem(["red", "green"])
-    });
-    return;
-  }
-
-  const abilityChoice = player.characters
-    .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
-    .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
-  if (abilityChoice) {
-    dispatch("ACTIVATE_CHARACTER", {
-      characterId: abilityChoice.instance.id,
-      abilityId: abilityChoice.ability.id,
-      ...botAbilityPayload(playerIndex, abilityChoice.instance, abilityChoice.ability)
-    });
-    return;
-  }
-
-  const cardLimit = player.difficulty === "normal" ? 2 : 1;
-  if (game.turn.skillCardsPlayed < cardLimit && !isAllSkillBlocked(player)) {
-    const priorities = ["fge", "commission", "review", "drink"];
-    const card = [...player.hand].sort((a, b) =>
-      priorities.indexOf(a.cardId) - priorities.indexOf(b.cardId)
-    )[0];
-    if (card) {
-      const payload = { cardUid: card.uid };
-      if (skillDefinition(card.cardId)?.target === "opponent") {
-        payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
+  } catch (error) {
+    console.error("[BOT] action failed:", error);
+    if (botContext.committed) {
+      console.log("[BOT] committed, resume");
+      botContext.state = "RECOVERING";
+    } else {
+      console.log("[BOT] retry");
+      botContext.state = "RECOVERING";
+      try {
+        hostDispatch(player.memberId, "END_TURN", {}, "", true);
+      } catch (e) {
+        console.error("[BOT] END_TURN also failed:", e);
       }
-      dispatch("PLAY_CARD", payload);
-      return;
     }
+  } finally {
+    botContext.state = "IDLE";
+    try { render(); } catch (e) { console.error("[RENDER]", e); }
+    scheduleBotAction();
   }
-  dispatch("END_TURN");
 }
 
 function scheduleBotAction() {
@@ -1698,6 +1793,28 @@ function scheduleBotAction() {
   if (!isAIActor(actor)) return;
   const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;
   ui.botTimer = setTimeout(performBotAction, delay);
+  clearTimeout(ui.botWatchdog);
+  ui.botWatchdog = setTimeout(() => {
+    if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
+    const player = game.players[game.currentPlayerIndex];
+    if (!isAIActor(player)) return;
+    if (game.phase === GAME_PHASE.TURN) {
+      if (game.pendingEvent) {
+        const pendingIdx = game.players.findIndex(p => p.memberId === game.pendingEvent.responderMemberId && isAIActor(p));
+        if (pendingIdx >= 0) {
+          resolveBotEvent(pendingIdx);
+          return;
+        }
+      }
+      if (botContext.committed) {
+        console.log("[BOT] watchdog: committed, reschedule");
+        scheduleBotAction();
+      } else {
+        console.log("[BOT] watchdog: not committed, retry");
+        performBotAction();
+      }
+    }
+  }, 15000);
 }
 
 function publicGameFor(memberId) {

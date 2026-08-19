@@ -1,7 +1,16 @@
 "use strict";
 
-const VERSION = "v2.0.1";
+const VERSION = "v2.1.1";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.1", items: [
+    "修复：柳橙汁3743技能使用后进入冷却但无效果——补充缺失的技能执行分支",
+    "修复：发力无法选择目标属性——改为玩家选择目标+属性（PLAYER_AND_DIMENSION）",
+    "修复：Remap点击后无反应——先完整弃牌再完整抽牌，不走cardIndex",
+    "修复：塔之诅咒无法手动选择角色——改为玩家选择自身1张+其他2~3张角色",
+    "修复：随机数写谱所有维度被设为同一值——每维度独立随机来源",
+    "重构：技能牌统一targetMode框架，新增consumePlayedSkillCard统一消耗函数",
+    "重构：Bot状态机（botContext/committed/watchdog/异常恢复/render解耦）"
+  ]},
   { version: "v2.0.1", items: [
     "调整：牌堆构成比例由原约69%事件牌/31%技能牌调整为30%事件牌/70%技能牌"
   ]},
@@ -319,11 +328,19 @@ const CHARACTERS = Object.freeze([
   }
 ]);
 
+const TARGET_MODE = Object.freeze({
+  NONE: "NONE",
+  PLAYER: "PLAYER",
+  PLAYER_AND_DIMENSION: "PLAYER_AND_DIMENSION",
+  OWN_CHARACTER: "OWN_CHARACTER",
+  OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS"
+});
+
 const SKILL_CARDS = Object.freeze([
   // ===== 成长（Growth）=====
   { id: "study", name: "学习", rarity: "white", category: "growth", target: "self", glyph: "book-open",
     description: "你的谱面中随机一个维度+5。" },
-  { id: "effort", name: "发力", rarity: "white", category: "growth", target: "opponent", glyph: "zap",
+  { id: "effort", name: "发力", rarity: "white", category: "growth", target: "opponent", glyph: "zap", targetMode: "PLAYER_AND_DIMENSION",
     description: "选择一名谱师，选择ta除选曲品味外的任一属性，将该属性值加到你的对应属性上。" },
   { id: "consult", name: "请教", rarity: "white", category: "growth", target: "opponent", glyph: "hand-helping",
     description: "选择一名玩家，你每个比他低的维度都获得+2。" },
@@ -394,7 +411,7 @@ const SKILL_CARDS = Object.freeze([
     description: "指定某一对象，使其声望-3。特别的，如果对象的角色为Ftayo/金叶/瑞矢级别大，声望额外-2；如果对象的角色为子微中，声望不受影响。" },
   { id: "bpm-bomb", name: "BPM轰炸", rarity: "blue", category: "attack", target: "opponent", glyph: "gauge",
     description: "选择一名玩家，将他的配置水平调整为当前平均值。" },
-  { id: "random-chart", name: "随机数写谱", rarity: "white", category: "attack", target: "opponent", glyph: "dices",
+  { id: "random-chart", name: "随机数写谱", rarity: "white", category: "attack", target: "opponent", glyph: "dices", targetMode: "PLAYER",
     description: "将任意一名玩家的所有谱面维度数值重新随机调整为其另一维度的数值。" },
   { id: "ibeam", name: "工字钢", rarity: "green", category: "attack", target: "opponent", glyph: "minus",
     description: "你的声望-2，该玩家配置水平-12。" },
@@ -406,7 +423,7 @@ const SKILL_CARDS = Object.freeze([
     description: "选择一名玩家，被选择的玩家随机维度失去N分，N=你拥有的手牌数量（包含打出的这张牌）。" },
   { id: "burst", name: "跟你爆了！！！", rarity: "purple", category: "attack", target: "opponent", glyph: "bomb",
     description: "选择一名声望至少高出你8的玩家，使其声望-8，自己的创新程度+4。" },
-  { id: "tower-curse", name: "塔之诅咒", rarity: "blue", category: "attack", target: "self", glyph: "lock",
+  { id: "tower-curse", name: "塔之诅咒", rarity: "blue", category: "attack", target: "self", glyph: "lock", targetMode: "OWN_AND_OPPONENT_CHARACTERS",
     description: "东尼意思。打出后可选择自身1张角色卡以及其他玩家2~3张角色卡，在下一回合中禁用这些角色的技能（冷却技能照常充能）。" },
   // ===== 技能（Skill）=====
   { id: "review", name: "评议", rarity: "orange", category: "skill", target: "self", glyph: "tickets",
@@ -424,7 +441,7 @@ const SKILL_CARDS = Object.freeze([
   { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot",
     description: "抽3张牌，丢弃1张牌。" },
   // ===== 抽牌（Draw）=====
-  { id: "remap", name: "Remap", rarity: "green", category: "draw", target: "self", glyph: "repeat",
+  { id: "remap", name: "Remap", rarity: "green", category: "draw", target: "self", glyph: "repeat", targetMode: "NONE",
     description: "丢弃所有手牌，然后抽等于被丢弃的牌数量+1（数量计入打出的这张Remap）的牌。" },
   { id: "hasty-draft", name: "潦草急就", rarity: "purple", category: "draw", target: "self", glyph: "zap-off",
     description: "失去2点配置水平、1点抽象动效水平与1点具象动效水平。抽5张牌。" }

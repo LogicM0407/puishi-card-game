@@ -689,8 +689,16 @@
 <script>
 "use strict";
 
-const VERSION = "v2.1.0";
+const VERSION = "v2.1.1";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.1", items: [
+    "修复：柳橙汁3743技能使用后进入冷却但无效果——补充缺失的技能执行分支",
+    "修复：发力无法选择目标属性——改为PLAYER_AND_DIMENSION模式",
+    "修复：Remap点击后无反应——先完整弃牌再完整抽牌",
+    "修复：塔之诅咒无法手动选择角色——改为手动选择",
+    "修复：随机数写谱所有维度被设为同一值——每维度独立随机",
+    "重构：技能牌统一targetMode框架+consumePlayedSkillCard+Bot状态机重构"
+  ]},
   { version: "v2.1.0", items: [
     "重构：将 game.html 单体文件拆分为模块化文件结构（index.html + css/style.css + js/ 目录6个文件）",
     "server.js 默认入口由 game.html 改为 index.html"

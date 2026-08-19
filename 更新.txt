@@ -1,3 +1,19 @@
+v2.1.1
+1. 修复：柳橙汁3743技能使用后进入冷却但无效果——补充缺失的技能执行分支，从目标手牌中选一张白/绿牌获得并打出
+2. 修复：发力无法选择目标属性——改为PLAYER_AND_DIMENSION模式，玩家手动选择目标玩家+属性
+3. 修复：Remap点击后无反应——先完整弃牌（含Remap自身）再完整抽牌，不再依赖cardIndex
+4. 修复：塔之诅咒无法手动选择角色——改为OWN_AND_OPPONENT_CHARACTERS模式，玩家手动选自身1张+其他2~3张角色
+5. 修复：随机数写谱所有维度被设为同一值——每维度独立从其他维度随机取值
+6. 重构：技能牌统一targetMode框架（NONE/PLAYER/PLAYER_AND_DIMENSION/OWN_CHARACTER/OWN_AND_OPPONENT_CHARACTERS）
+7. 重构：新增consumePlayedSkillCard统一消耗函数，取消尾部无条件splice
+8. 重构：Bot状态机（botContext/committed/异常恢复/render解耦/15秒watchdog/选牌优先级修复）
+   - botContext跟踪EXECUTING→COMMITTED→IDLE状态
+   - 异常处理：未提交动作重试→END_TURN，已提交动作仅重新调度
+   - render与scheduleBotAction解耦（try/catch/finally）
+   - 15秒watchdog：pendingEvent优先resolveBotEvent，committed只重新调度
+   - 选牌优先级用priorityMap替代indexOf（未知牌不再优先）
+   - PLAY_CARD失败时依次尝试下一张候选牌
+
 v2.1.0
 1. 重构：将 game.html 单体文件拆分为模块化文件结构
    - index.html：主 HTML 入口，引用外部 CSS 和 JS 文件
