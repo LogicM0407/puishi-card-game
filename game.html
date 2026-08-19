@@ -689,8 +689,13 @@
 <script>
 "use strict";
 
-const VERSION = "v1.2.0";
+const VERSION = "v1.2.1";
 const CHANGELOG = Object.freeze([
+  { version: "v1.2.1", items: [
+    "修复：加入房间稳定失败——WELCOME 处理时先保存队列中 seqNum 大于快照的消息，clearMessageQueue 后重新入队，避免早期 CORE_MESSAGE 被清空导致序列号断裂、UI 卡死",
+    "修复：publicGameFor 请求者强制 connected=true，防止断线重连玩家（含 AI 托管）因 connected=false 被客户端误判为观战者而无法操作",
+    "优化：连接超时延长——waitForConnectionOpen 16s→25s，joinRoom 房间无响应 12s→30s，超时提示优化为「连接房主超时，请确认房间码正确、房主在线，并检查网络后重试」"
+  ]},
   { version: "v1.2.0", items: [
     "网络：重构通信层，引入核心消息同步机制（Core Message Sync）——所有游戏逻辑操作通过房主生成核心消息并广播，客户端不得自行执行状态逻辑",
     "网络：客户端实现消息队列，按全局序列号（seqNum）顺序执行，支持跳号检测与补发请求（MISSING_MESSAGES_REQUEST）",
