@@ -936,7 +936,7 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   } else if (ability.id === "dagezi-main") {
     const lowest = Math.min(...DIMENSIONS.map(dim => player.scores[dim]));
     DIMENSIONS.forEach(dim => setScore(playerIndex, dim, lowest, { sourcePlayerIndex: playerIndex }));
-    gainReputation(playerIndex, 1, { cap: 15 });
+    gainReputation(playerIndex, 1);
     appendLog(`${player.name} 发动大鸽子喵喵喵技能：选曲品味外的维度降至${lowest}，声望+1。`, "effect");
   } else if (ability.id === "hotwind-main") {
     gainReputation(playerIndex, -1);
@@ -1048,10 +1048,13 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
     appendLog(`${player.name} 打出「学习」：${DIMENSION_LABELS[dim]}+5。`, "effect");
   } else if (definition.id === "effort") {
-    const dim = payload.dimension;
-    const amount = Math.floor(target.scores[dim] * skillCardPointMultiplier(player));
+    const dim = payload.dimension || randomItem(CHANGEABLE_DIMENSIONS);
+    const opponents = game.players.filter(p => p.memberId !== player.memberId);
+    if (!opponents.length) return fail("没有其他玩家可作为目标");
+    const targetPlayer = randomItem(opponents);
+    const amount = Math.floor(targetPlayer.scores[dim] * skillCardPointMultiplier(player));
     applyScoreChange(playerIndex, dim, amount, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「发力」：从${target.name}的${DIMENSION_LABELS[dim]}获得${amount}点。`, "effect");
+    appendLog(`${player.name} 打出「发力」：从${targetPlayer.name}的${DIMENSION_LABELS[dim]}获得${amount}点。`, "effect");
   } else if (definition.id === "consult") {
     let count = 0;
     DIMENSIONS.forEach(dim => {
@@ -1752,6 +1755,8 @@ function performBotAction() {
           if (def.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
             payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
           }
+        } else if (def?.targetMode === TARGET_MODE.OWN_DIMENSION) {
+          payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }

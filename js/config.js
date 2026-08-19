@@ -1,7 +1,12 @@
 "use strict";
 
-const VERSION = "v2.1.1";
+const VERSION = "v2.1.2";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.2", items: [
+    "修复：所有带选角色的功能无法选角色——processSyncQueue中else if改为独立if，防止非匹配requestId阻断pendingRequest清除",
+    "修复：大鸽子声望上限15——移除cap参数，声望可无限增长",
+    "修复：发力应选择自己属性而非其他玩家——改为OWN_DIMENSION模式，玩家选自己属性，系统自动随机目标"
+  ]},
   { version: "v2.1.1", items: [
     "修复：柳橙汁3743技能使用后进入冷却但无效果——补充缺失的技能执行分支",
     "修复：发力无法选择目标属性——改为玩家选择目标+属性（PLAYER_AND_DIMENSION）",
@@ -292,7 +297,7 @@ const CHARACTERS = Object.freeze([
     lore: "简单的六维评分已经无法形容此人的伟大。",
     abilities: [{
       id: "dagezi-main", cooldown: 1,
-      description: "每回合可以发动1次，使谱面所有评价维度降至当前最低值，并获得1点声望，声望最多由此达到15点。"
+      description: "每回合可以发动1次，使谱面所有评价维度降至当前最低值，并获得1点声望。"
     }],
     passive: "最终结算时，自己的综合分每低于前一名3分，使随机1名对手的综合分-2。"
   },
@@ -332,6 +337,7 @@ const TARGET_MODE = Object.freeze({
   NONE: "NONE",
   PLAYER: "PLAYER",
   PLAYER_AND_DIMENSION: "PLAYER_AND_DIMENSION",
+  OWN_DIMENSION: "OWN_DIMENSION",
   OWN_CHARACTER: "OWN_CHARACTER",
   OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS"
 });
@@ -340,8 +346,8 @@ const SKILL_CARDS = Object.freeze([
   // ===== 成长（Growth）=====
   { id: "study", name: "学习", rarity: "white", category: "growth", target: "self", glyph: "book-open",
     description: "你的谱面中随机一个维度+5。" },
-  { id: "effort", name: "发力", rarity: "white", category: "growth", target: "opponent", glyph: "zap", targetMode: "PLAYER_AND_DIMENSION",
-    description: "选择一名谱师，选择ta除选曲品味外的任一属性，将该属性值加到你的对应属性上。" },
+  { id: "effort", name: "发力", rarity: "white", category: "growth", target: "self", glyph: "zap", targetMode: "OWN_DIMENSION",
+    description: "选择自己除选曲品味外的任一属性，随机一名谱师的对应属性值加到你的该属性上。" },
   { id: "consult", name: "请教", rarity: "white", category: "growth", target: "opponent", glyph: "hand-helping",
     description: "选择一名玩家，你每个比他低的维度都获得+2。" },
   { id: "only-this", name: "只会这个", rarity: "white", category: "growth", target: "self", glyph: "arrow-up",

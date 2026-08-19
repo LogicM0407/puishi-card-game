@@ -148,7 +148,8 @@ function processSyncQueue() {
     if (event.game) game = event.game;
     if (event.requestId) {
       clearPendingGameAction(event.requestId);
-    } else if (ui.pendingAction && event.seq > ui.pendingAction.baseSequence) {
+    }
+    if (ui.pendingAction && event.seq > ui.pendingAction.baseSequence) {
       clearPendingGameAction();
     }
     if (event.result?.draw?.kind === "event") {

@@ -513,6 +513,10 @@ function openCardAction(cardUid) {
   if (!mode || mode === TARGET_MODE.NONE) {
     return sendGameAction("PLAY_CARD", { cardUid });
   }
+  if (mode === TARGET_MODE.OWN_DIMENSION) {
+    ui.modal = { kind: "skill-own-dimension", cardUid, title: definition.name, description: definition.description, selectedDimension: null };
+    return render();
+  }
   if (mode === TARGET_MODE.PLAYER) {
     const targets = game.players.filter(player => player.memberId !== me.memberId);
     ui.modal = { kind: "skill-target-player", cardUid, title: definition.name, description: definition.description, targets };
@@ -605,6 +609,14 @@ function renderActionModal() {
   } else if (modal.kind === "up-to-two-targets") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn ${modal.selected.includes(target.memberId) ? "selected" : ""}" data-toggle-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${modal.selected.includes(target.memberId) ? "已选" : "选择"}</span></button>`).join("")}</div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
+  } else if (modal.kind === "skill-own-dimension") {
+    const dimensionButtons = CHANGEABLE_DIMENSIONS.map(dim => {
+      const selected = modal.selectedDimension === dim;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-skill-own-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">当前: ${me?.scores?.[dim] ?? 0}</span></button>`;
+    }).join("");
+    const canConfirm = modal.selectedDimension;
+    choices = `<div class="event-step"><div class="event-step-title">选择要提升的属性</div><div class="target-list">${dimensionButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "skill-player-dimension") {
     const playerButtons = modal.targets.map(target => {
       const selected = modal.selectedTarget === target.memberId;
@@ -700,6 +712,12 @@ function renderActionModal() {
       else sendGameAction("ACTIVATE_CHARACTER", { characterId: modal.characterId, abilityId: modal.abilityId, targetMemberId });
     };
   });
+  document.querySelectorAll("[data-skill-own-dimension]").forEach(button => {
+    button.onclick = () => {
+      modal.selectedDimension = button.dataset.skillOwnDimension;
+      render();
+    };
+  });
   document.querySelectorAll("[data-skill-target]").forEach(button => {
     button.onclick = () => {
       modal.selectedTarget = button.dataset.skillTarget;
@@ -776,7 +794,9 @@ function renderActionModal() {
   });
   document.getElementById("confirm-modal")?.addEventListener("click", () => {
     ui.modal = null;
-    if (modal.kind === "skill-player-dimension") {
+    if (modal.kind === "skill-own-dimension") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, dimension: modal.selectedDimension });
+    } else if (modal.kind === "skill-player-dimension") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId: modal.selectedTarget, dimension: modal.selectedDimension });
     } else if (modal.kind === "skill-own-opponent-characters") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, ownCharacterUid: modal.selectedOwnUid, targetCharacterUids: modal.selectedOpponentUids });

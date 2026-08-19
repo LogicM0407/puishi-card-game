@@ -689,8 +689,13 @@
 <script>
 "use strict";
 
-const VERSION = "v2.1.1";
+const VERSION = "v2.1.2";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.2", items: [
+    "修复：所有带选角色的功能无法选角色——pendingRequest清除逻辑修复",
+    "修复：大鸽子声望上限15——移除cap参数",
+    "修复：发力改为选择自己属性，系统自动随机目标"
+  ]},
   { version: "v2.1.1", items: [
     "修复：柳橙汁3743技能使用后进入冷却但无效果——补充缺失的技能执行分支",
     "修复：发力无法选择目标属性——改为PLAYER_AND_DIMENSION模式",
