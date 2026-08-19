@@ -4579,7 +4579,9 @@ function openAbilityAction(characterId, abilityId) {
   const definition = characterDefinition(characterId);
   const ability = characterAbilityDefinition(characterId, abilityId);
   if (!definition || !ability) return;
-  if (ability.choice === "three-dimensions") {
+  if (ability.choice === "two-dimensions") {
+    ui.modal = { kind: "two-dimensions", characterId, abilityId, title: definition.name, description: ability.description, selected: [] };
+  } else if (ability.choice === "three-dimensions") {
     ui.modal = { kind: "three-dimensions", characterId, abilityId, title: definition.name, description: ability.description, selected: [] };
   } else if (ability.choice === "motion-distribution") {
     ui.modal = { kind: "motion-distribution", characterId, abilityId, title: definition.name, description: ability.description };
@@ -4629,6 +4631,9 @@ function renderActionModal() {
     choices = `<div class="target-list">
       ${[0, 1, 2, 3, 4, 5].map(value => `<button class="target-btn" data-motion-points="${value}"><span>抽象 ${value} · 具象 ${5 - value}</span><span class="target-score">5点</span></button>`).join("")}
     </div>`;
+  } else if (modal.kind === "two-dimensions") {
+    choices = `<div class="target-list">${CHANGEABLE_DIMENSIONS.map(dim => `<button class="target-btn ${modal.selected.includes(dim) ? "selected" : ""}" data-toggle-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selected.includes(dim) ? "已选" : "选择"}</span></button>`).join("")}</div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selected.length === 2 ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "three-dimensions") {
     choices = `<div class="target-list">${CHANGEABLE_DIMENSIONS.map(dim => `<button class="target-btn ${modal.selected.includes(dim) ? "selected" : ""}" data-toggle-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selected.includes(dim) ? "已选" : "选择"}</span></button>`).join("")}</div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selected.length === 3 ? "" : "disabled"}>确定</button></div>`;
@@ -4714,9 +4719,10 @@ function renderActionModal() {
   document.querySelectorAll("[data-toggle-dimension]").forEach(button => {
     button.onclick = () => {
       const dimension = button.dataset.toggleDimension;
+      const maxDimensions = modal.kind === "two-dimensions" ? 2 : 3;
       modal.selected = modal.selected.includes(dimension)
         ? modal.selected.filter(item => item !== dimension)
-        : modal.selected.length < 3 ? [...modal.selected, dimension] : modal.selected;
+        : modal.selected.length < maxDimensions ? [...modal.selected, dimension] : modal.selected;
       render();
     };
   });
@@ -4757,7 +4763,7 @@ function renderActionModal() {
       sendGameAction("RESOLVE_EVENT", payload);
     } else if (modal.kind === "restore-character") {
       sendGameAction("RESTORE_CHARACTER", { characterUid: modal.selectedCharacterUid });
-    } else if (modal.kind === "three-dimensions") {
+    } else if (modal.kind === "three-dimensions" || modal.kind === "two-dimensions") {
       sendGameAction("ACTIVATE_CHARACTER", {
         characterId: modal.characterId,
         abilityId: modal.abilityId,
