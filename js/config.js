@@ -1,7 +1,14 @@
 "use strict";
 
-const VERSION = "v2.1.2";
+const VERSION = "v2.1.3";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.3", items: [
+    "修复：塔之诅咒技能牌依然无法手动选择角色——renderActionModal中me变量未定义",
+    "修复：机器人在打出「我就不写谱」后卡住不动——resolveBotEvent在try/catch外部，异常导致scheduleBotAction永不被调用",
+    "修复：broadcastStateEvent中render()异常阻断bot调度——包裹try/catch",
+    "修复：机器人不支持OWN_AND_OPPONENT_CHARACTERS目标模式——添加对应出牌逻辑",
+    "实装：「我就不写谱」技能牌效果——选1个可用技能角色重置为不可用，抽2张牌"
+  ]},
   { version: "v2.1.2", items: [
     "修复：所有带选角色的功能无法选角色——processSyncQueue中else if改为独立if，防止非匹配requestId阻断pendingRequest清除",
     "修复：大鸽子声望上限15——移除cap参数，声望可无限增长",
