@@ -1,3 +1,9 @@
+v1.2.4
+1. 修复：房主开始游戏时客户端无显示（稳定触发）
+   - sendCoreMessageToPlayer 未转发 isSnapshot 标记，导致客户端 isSnapshot 绕过队列为死代码——已补上 isSnapshot: message.isSnapshot || false
+   - handleMissingMessagesRequest 补发消息同样未转发 isSnapshot——已补上
+   - scheduleStateCheck 仅在 game 非空时运行，客户端漏收游戏开始 CORE_MESSAGE 后无法发起 SYNC_REQUEST，卡在lobby——改为客户端连接后始终每5秒发送 SYNC_REQUEST，房主检测到序列落后时自动发送 RESYNC 全量状态
+
 v1.2.3
 1. 修复：全量状态同步消息因队列阻塞无法及时应用
    - emitCoreMessage 为 action==="SYNC" 且 result.draw 为空的消息添加 isSnapshot: true 标记

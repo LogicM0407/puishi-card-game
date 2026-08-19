@@ -689,8 +689,14 @@
 <script>
 "use strict";
 
-const VERSION = "v1.2.3";
+const VERSION = "v1.2.4";
 const CHANGELOG = Object.freeze([
+  { version: "v1.2.4", items: [
+    "修复：sendCoreMessageToPlayer 未转发 isSnapshot 标记，导致客户端 isSnapshot 绕过队列为死代码",
+    "修复：handleMissingMessagesRequest 补发消息未转发 isSnapshot 标记",
+    "修复：scheduleStateCheck 仅在 game 非空时运行，客户端漏收游戏开始 CORE_MESSAGE 后无法发起 SYNC_REQUEST，导致卡在lobby",
+    "优化：客户端连接后始终每5秒发送 SYNC_REQUEST，房主检测到序列落后时自动发送 RESYNC 全量状态"
+  ]},
   { version: "v1.2.3", items: [
     "修复：全量状态同步消息因队列阻塞无法及时应用——emitCoreMessage 为 SYNC 且无 draw 的消息添加 isSnapshot 标记，enqueueCoreMessage 检测到 isSnapshot 后立即应用状态并清空队列，不再入队等待"
   ]},
@@ -3280,6 +3286,7 @@ function sendCoreMessageToPlayer(memberId, message, actorMemberId = "") {
     ok: message.ok,
     reason: message.reason,
     draw: message.draw,
+    isSnapshot: message.isSnapshot || false,
     room: publicRoom(),
     game: publicGameFor(memberId),
     authorityBackup: authorityBackupFor(memberId),
@@ -3364,6 +3371,7 @@ function handleMissingMessagesRequest(memberId, fromSeq, toSeq) {
         ok: msg.ok,
         reason: msg.reason,
         draw: msg.draw,
+        isSnapshot: msg.isSnapshot || false,
         room: publicRoom(),
         game: publicGameFor(memberId),
         authorityBackup: authorityBackupFor(memberId),
@@ -3555,12 +3563,12 @@ function processMessageQueue() {
 function scheduleStateCheck() {
   clearTimeout(ui.syncTimer);
   ui.syncTimer = null;
-  if (room.isHost || !room.connected || !game) return;
+  if (room.isHost || !room.connected) return;
   ui.syncTimer = setTimeout(() => {
-    if (!room.isHost && room.connected && game) {
+    if (!room.isHost && room.connected) {
       room.transport?.sendToHost({
         type: "SYNC_REQUEST",
-        knownSequence: game.sequence ?? -1
+        knownSequence: game?.sequence ?? -1
       });
     }
     scheduleStateCheck();
