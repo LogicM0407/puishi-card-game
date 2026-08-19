@@ -49,7 +49,7 @@ function broadcastStateEvent(event, actorId) {
   if (!room.isHost) return;
   room.members.forEach(member => {
     if (member.id === room.myId || !member.connected || member.isBot) return;
-    room.transport?.sendToPlayer(member.id, {
+    const sent = room.transport?.sendToPlayer(member.id, {
       type: "STATE_EVENT",
       seq: event.seq,
       eventId: event.eventId,
@@ -60,6 +60,9 @@ function broadcastStateEvent(event, actorId) {
       room: event.room,
       game: publicGameFor(member.id)
     });
+    if (sent === false) {
+      console.warn("[SYNC] STATE_EVENT 发送失败，等待周期检查补发", { memberId: member.id, seq: event.seq });
+    }
   });
   try { render(); } catch (e) { console.error("[RENDER]", e); }
   scheduleBotAction();
@@ -90,14 +93,18 @@ function handleEventRequest(memberId, fromSeq, toSeq) {
 
 function sendSnapshot(memberId, extra = {}) {
   if (!room.isHost) return false;
-  return room.transport?.sendToPlayer(memberId, {
+  const sent = room.transport?.sendToPlayer(memberId, {
     type: "SNAPSHOT",
     seq: game?.sequence ?? 0,
     room: publicRoom(),
     game: publicGameFor(memberId),
     chatHistory: ui.chatMessages.slice(-CHAT_MAX_MESSAGES),
     ...extra
-  }) || false;
+  });
+  if (sent === false) {
+    console.warn("[SYNC] SNAPSHOT 发送失败", { memberId });
+  }
+  return sent || false;
 }
 
 function handleStateAck(memberId, seq) {
@@ -105,8 +112,7 @@ function handleStateAck(memberId, seq) {
 }
 
 function schedulePeriodicSyncCheck() {
-  clearTimeout(ui.hostPeriodicTimer);
-  ui.hostPeriodicTimer = null;
+  if (ui.hostPeriodicTimer) return;
   if (!room.isHost || !game) return;
   ui.hostPeriodicTimer = setTimeout(() => {
     ui.hostPeriodicTimer = null;

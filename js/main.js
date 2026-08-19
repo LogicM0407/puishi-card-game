@@ -148,6 +148,19 @@ class PeerTransport {
     this.closed = false;
   }
 
+  logTransport(level, tag, extra) {
+    try {
+      const fn = console[level] || console.log;
+      fn.call(console, `[P2P][${tag}]`, {
+        room: this.roomCode,
+        peer: this.myPeerId,
+        isHost: this.isHost,
+        at: new Date().toISOString(),
+        ...extra
+      });
+    } catch (_) {}
+  }
+
   peerOptions() {
     return {
       debug: 0,
@@ -157,7 +170,18 @@ class PeerTransport {
           { urls: "stun:stun1.l.google.com:19302" },
           { urls: "stun:stun2.l.google.com:19302" },
           { urls: "stun:stun.miwifi.com:3478" },
-          { urls: "stun:stun.chat.bilibili.com:3478" }
+          { urls: "stun:stun.chat.bilibili.com:3478" },
+          // TURN 中继兜底：对称型 NAT / 企业防火墙等 P2P 直连失败时走中继。
+          // 当前使用公共免费 TURN（openrelay），生产环境建议替换为自建 coturn 以保证国内可用性。
+          {
+            urls: [
+              "turn:openrelay.metered.ca:80",
+              "turn:openrelay.metered.ca:443",
+              "turn:openrelay.metered.ca:443?transport=tcp"
+            ],
+            username: "openrelayproject",
+            credential: "openrelayproject"
+          }
         ]
       }
     };
@@ -172,6 +196,9 @@ class PeerTransport {
     this.isHost = true;
     this.myPeerId = this.hostPeerId();
     this.peer = new Peer(this.myPeerId, this.peerOptions());
+    this.peer.on("error", error => {
+      this.logTransport("error", "peer-error", { message: String(error?.message || error), type: error?.type || "" });
+    });
     const pendingConnections = [];
     let connectionHandler = null;
     this.peer.on("connection", connection => {
@@ -188,8 +215,11 @@ class PeerTransport {
     this.isHost = false;
     this.myPeerId = `puishi-v100-client-${cryptoRandom(10)}`;
     this.peer = new Peer(this.myPeerId, this.peerOptions());
+    this.peer.on("error", error => {
+      this.logTransport("error", "peer-error", { message: String(error?.message || error), type: error?.type || "" });
+    });
     await this.waitForPeerOpen();
-    const connection = this.peer.connect(this.hostPeerId(), { reliable: true, serialization: "json" });
+    const connection = this.peer.connect(this.hostPeerId(), { reliable: true, serialization: "binary" });
     this.hostConnection = connection;
     this.attachConnection(connection);
     await this.waitForConnectionOpen(connection);
@@ -219,7 +249,10 @@ class PeerTransport {
     connection.on("data", data => {
       let message = data;
       if (typeof data === "string") {
-        try { message = JSON.parse(data); } catch (_) { return; }
+        try { message = JSON.parse(data); } catch (err) {
+          this.logTransport("error", "parse-error", { message: String(err?.message || err), length: data.length });
+          return;
+        }
       }
       const record = this.connections.get(connection.peer);
       if (message?.type === "JOIN" && record) {
@@ -232,10 +265,13 @@ class PeerTransport {
       const record = this.connections.get(connection.peer);
       this.connections.delete(connection.peer);
       if (this.closed) return;
+      this.logTransport("warn", "connection-closed", { peer: connection.peer, playerId: record?.playerId || null });
       if (this.isHost) this.onPeerLeft?.({ peerId: connection.peer, playerId: record?.playerId || null });
       else this.onHostLost?.();
     });
-    connection.on("error", () => {});
+    connection.on("error", error => {
+      this.logTransport("error", "connection-error", { message: String(error?.message || error), type: error?.type || "", peer: connection.peer });
+    });
   }
 
   bindPlayer(peerId, playerId, name) {
@@ -251,11 +287,22 @@ class PeerTransport {
   }
 
   send(connection, message) {
-    if (!connection?.open) return false;
+    if (!connection?.open) {
+      this.logTransport("warn", "send-closed", { messageType: message?.type || "" });
+      return false;
+    }
     try {
+      if (message?.type === "STATE_EVENT" || message?.type === "SNAPSHOT") {
+        let bytes = 0;
+        try { bytes = JSON.stringify(message).length; } catch (_) {}
+        if (bytes > PEER_SAFE_MESSAGE_BYTES) {
+          this.logTransport("warn", "large-message", { messageType: message.type, bytes });
+        }
+      }
       connection.send(message);
       return true;
-    } catch (_) {
+    } catch (err) {
+      this.logTransport("error", "send-error", { messageType: message?.type || "", message: String(err?.message || err) });
       return false;
     }
   }

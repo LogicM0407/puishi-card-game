@@ -535,6 +535,8 @@ const ROOM_STORAGE_KEY = "puishi-card-last-room-v1";
 
 const EVENT_LOG_MAX = 500;
 const SYNC_GAP_TIMEOUT_MS = 3000;
+// PeerJS "json" 序列化单条消息的保守安全阈值（约 16KB），超过即可能被 DataChannel 静默丢弃。
+const PEER_SAFE_MESSAGE_BYTES = 16 * 1024;
 
 const DISCONNECT_AI_TIMEOUT_MS = 90000;
 const INACTIVE_AI_TIMEOUT_MS = 120000;
