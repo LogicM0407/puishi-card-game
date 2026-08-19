@@ -2856,22 +2856,44 @@ function resolveBotEvent(playerIndex) {
   const pending = game.pendingEvent;
   const player = game.players[playerIndex];
   if (!pending || pending.responderMemberId !== player.memberId) return fail("没有待处理事件");
+  let result;
   if (pending.stage === "choose") {
     const targetIndex = botTargetIndex(playerIndex);
-    return hostDispatch(player.memberId, "RESOLVE_EVENT", {
+    result = hostDispatch(player.memberId, "RESOLVE_EVENT", {
       ownCharacterUid: randomItem(player.characters)?.uid,
       targetMemberId: game.players[targetIndex]?.memberId
     }, "", true);
+  } else {
+    const targetCharacterUid = randomItem(player.characters)?.uid;
+    if (pending.eventId === "maimai") {
+      result = hostDispatch(player.memberId, "RESOLVE_EVENT", { targetCharacterUid }, "", true);
+    } else {
+      const decision = player.difficulty === "normal" || Math.random() < .65 ? "accept" : "refuse";
+      result = hostDispatch(player.memberId, "RESOLVE_EVENT", { decision, targetCharacterUid }, "", true);
+    }
   }
-  const targetCharacterUid = randomItem(player.characters)?.uid;
-  if (pending.eventId === "maimai") {
-    return hostDispatch(player.memberId, "RESOLVE_EVENT", { targetCharacterUid }, "", true);
+  // 若 hostDispatch 失败（如角色 uid 无效），不会触发 syncAll，需手动重试避免卡死
+  if (!result.ok) {
+    // choose 阶段失败：强制选择第一个可用目标重试一次；仍失败则放弃事件
+    if (pending.stage === "choose") {
+      const fallbackTarget = game.players.find((p, i) => i !== playerIndex);
+      if (fallbackTarget) {
+        const fallbackChar = player.characters[0];
+        const retry = hostDispatch(player.memberId, "RESOLVE_EVENT", {
+          ownCharacterUid: fallbackChar?.uid,
+          targetMemberId: fallbackTarget.memberId
+        }, "", true);
+        if (retry.ok) return retry;
+      }
+    }
+    // 仍失败：放弃当前事件，避免永久卡死
+    appendLog(`${player.name} 无法处理事件「${eventDefinition(pending.eventId)?.name}」，事件被跳过。`, "event");
+    game.pendingEvent = null;
+    syncAll();
+    scheduleBotAction();
+    return ok();
   }
-  const decision = player.difficulty === "normal" || Math.random() < .65 ? "accept" : "refuse";
-  return hostDispatch(player.memberId, "RESOLVE_EVENT", {
-    decision,
-    targetCharacterUid
-  }, "", true);
+  return result;
 }
 
 function isAIActor(player) {
