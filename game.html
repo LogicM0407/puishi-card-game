@@ -2005,8 +2005,10 @@ function beginTurn() {
     drawCards(game.currentPlayerIndex, count);
     appendLog(`${player.name} 额外摸${count}张牌。`, "effect");
   }
-  if (!player.isBot && player.aiControlled) {
-    appendLog(`${player.name} 由 AI 托管执行本轮操作。`, "event");
+  if (isAIActor(player)) {
+    if (!player.isBot) {
+      appendLog(`${player.name} 由 AI 托管执行本轮操作。`, "event");
+    }
     scheduleBotAction();
     return;
   }
@@ -2805,6 +2807,9 @@ function botAbilityPayload(playerIndex, instance, ability) {
   if (ability.choice === "three-dimensions") {
     return { dimensions: shuffle([...CHANGEABLE_DIMENSIONS]).slice(0, 3) };
   }
+  if (ability.choice === "two-dimensions") {
+    return { dimensions: shuffle([...CHANGEABLE_DIMENSIONS]).slice(0, 2) };
+  }
   if (ability.choice === "motion-distribution") {
     return { abstractPoints: Math.floor(Math.random() * 6) };
   }
@@ -2889,9 +2894,17 @@ function performBotAction() {
   const player = game.players[playerIndex];
   if (!isAIActor(player)) return;
 
+  // 封装 hostDispatch：若操作失败则 fallback 到 END_TURN，防止 bot 永久卡死
+  const dispatch = (action, payload = {}) => {
+    const result = hostDispatch(player.memberId, action, payload, "", true);
+    if (!result.ok && action !== "END_TURN" && action !== "DRAFT_DONE") {
+      hostDispatch(player.memberId, "END_TURN", {}, "", true);
+    }
+  };
+
   if (game.phase === GAME_PHASE.DRAFT) {
     const choice = botCharacterChoice(playerIndex);
-    hostDispatch(player.memberId, choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {}, "", true);
+    dispatch(choice ? "DRAFT_BUY" : "DRAFT_DONE", choice ? { characterId: choice.id } : {});
     return;
   }
 
@@ -2901,29 +2914,29 @@ function performBotAction() {
         .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
         .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
       if (choice) {
-        hostDispatch(player.memberId, "ACTIVATE_CHARACTER", {
+        dispatch("ACTIVATE_CHARACTER", {
           characterId: choice.instance.id,
           abilityId: choice.ability.id,
           ...botAbilityPayload(playerIndex, choice.instance, choice.ability)
-        }, "", true);
+        });
         return;
       }
     }
-    hostDispatch(player.memberId, "END_TURN", {}, "", true);
+    dispatch("END_TURN");
     return;
   }
 
   if (!game.turn.hasDrawn) {
-    hostDispatch(player.memberId, "DRAW", {}, "", true);
+    dispatch("DRAW");
     return;
   }
 
   if (player.reviewTurns > 0 && !player.reviewActionUsed && !isAllSkillBlocked(player)) {
     const targetIndex = player.difficulty === "normal" ? botTargetIndex(playerIndex) : Math.floor(Math.random() * game.players.length);
-    hostDispatch(player.memberId, "REVIEW_VOTE", {
+    dispatch("REVIEW_VOTE", {
       targetMemberId: game.players[targetIndex].memberId,
       vote: player.difficulty === "normal" ? "red" : randomItem(["red", "green"])
-    }, "", true);
+    });
     return;
   }
 
@@ -2931,11 +2944,11 @@ function performBotAction() {
     .flatMap(instance => characterDefinition(instance.id).abilities.map(ability => ({ instance, ability })))
     .find(entry => canActivateCharacter(player, entry.instance, entry.ability).ok);
   if (abilityChoice) {
-    hostDispatch(player.memberId, "ACTIVATE_CHARACTER", {
+    dispatch("ACTIVATE_CHARACTER", {
       characterId: abilityChoice.instance.id,
       abilityId: abilityChoice.ability.id,
       ...botAbilityPayload(playerIndex, abilityChoice.instance, abilityChoice.ability)
-    }, "", true);
+    });
     return;
   }
 
@@ -2950,11 +2963,11 @@ function performBotAction() {
       if (skillDefinition(card.cardId)?.target === "opponent") {
         payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
       }
-      hostDispatch(player.memberId, "PLAY_CARD", payload, "", true);
+      dispatch("PLAY_CARD", payload);
       return;
     }
   }
-  hostDispatch(player.memberId, "END_TURN", {}, "", true);
+  dispatch("END_TURN");
 }
 
 function scheduleBotAction() {
