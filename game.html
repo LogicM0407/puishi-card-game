@@ -689,8 +689,11 @@
 <script>
 "use strict";
 
-const VERSION = "v2.0.0";
+const VERSION = "v2.0.1";
 const CHANGELOG = Object.freeze([
+  { version: "v2.0.1", items: [
+    "调整：牌堆构成比例由原约69%事件牌/31%技能牌调整为30%事件牌/70%技能牌"
+  ]},
   { version: "v2.0.0", items: [
     "重构：联机同步层全面重构，采用权威状态 + 顺序状态事件 + 缺号补发 + 完整快照恢复架构",
     "新增：SyncManager 模块，统一处理主机端和客户端的同步逻辑",
@@ -1373,12 +1376,15 @@ function createDeck() {
     const copies = card.isRare ? 1 : 5;
     for (let i = 0; i < copies; i++) eventCards.push(createCard("event", card.id));
   });
-  // 技能牌按稀有度加权生成（rarity-weighted draw 在 drawSkillFromPool 中实现）
-  // 此处技能牌仍按 1 份入堆，主要靠 weighted 摸牌维持稀有度分布
-  return shuffle([
-    ...SKILL_CARDS.map(card => createCard("skill", card.id)),
-    ...eventCards
-  ]);
+  // 牌堆构成：30%事件牌 + 70%技能牌
+  // 事件牌约72张（普通14×5 + 稀有2×1），技能牌33×5=165张，总计约237张
+  // 事件牌占比 72/237 ≈ 30.4%，技能牌占比 165/237 ≈ 69.6%
+  // 技能牌稀有度仍由 drawSkillFromPool 中的 weightedSkillCard 维持
+  const skillCards = [];
+  SKILL_CARDS.forEach(card => {
+    for (let i = 0; i < 5; i++) skillCards.push(createCard("skill", card.id));
+  });
+  return shuffle([...skillCards, ...eventCards]);
 }
 
 function createCard(type, cardId) {
