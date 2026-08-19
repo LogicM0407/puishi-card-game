@@ -1,3 +1,21 @@
+v2.1.0
+1. 重构：将 game.html 单体文件拆分为模块化文件结构
+   - index.html：主 HTML 入口，引用外部 CSS 和 JS 文件
+   - css/style.css：全部 CSS 样式（676行）
+   - js/config.js：常量、配置、角色/卡牌数据（518行）
+   - js/utils.js：通用工具函数（59行）
+   - js/gameLogic.js：游戏核心逻辑（1812行）
+   - js/network.js：网络同步层 PeerTransport + SyncManager（984行）
+   - js/ui.js：渲染和交互（848行）
+   - js/main.js：初始化入口、全局变量、PeerTransport 类（293行）
+   - server.js 默认入口由 game.html 改为 index.html
+   - 保留 game.html 作为备份，不改变原有业务逻辑
+
+v2.0.1
+1. 调整：牌堆构成比例由原约69%事件牌/31%技能牌调整为30%事件牌/70%技能牌
+   - 技能牌每张5份入堆（原1份），事件牌权重不变（普通5份/稀有1份）
+   - 牌堆约237张：技能牌165张（69.6%）+ 事件牌72张（30.4%）
+
 v2.0.0
 1. 重构：联机同步层全面重构，采用"权威状态 + 顺序状态事件 + 缺号补发 + 完整快照恢复"架构
    - 新增 SyncManager 模块，统一处理主机端和客户端的同步逻辑

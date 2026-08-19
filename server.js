@@ -1,7 +1,7 @@
 /* ===============================================================
  * 谱师卡牌 · 跨设备 WebSocket 中继服务器
  *   · HTTP + WebSocket 共用同一端口（默认 8080）
- *   · 静态文件：/game.html 等直接从当前目录托管
+ *   · 静态文件：/index.html 等直接从当前目录托管
  *   · WebSocket：/ws
  *   · 房间：按 5 位 roomCode 隔离；消息完全透传
  *   · 支持跨设备局域网联机
@@ -64,14 +64,14 @@ const server = http.createServer((req, res) => {
   } catch (_) {
     res.writeHead(400); return res.end('Bad Request');
   }
-  if (urlPath === '/' || urlPath === '') urlPath = '/game.html';
+  if (urlPath === '/' || urlPath === '') urlPath = '/index.html';
 
   let filePath = path.normalize(path.join(ROOT, urlPath));
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }
 
   fs.stat(filePath, (err, st) => {
     if (err || !st.isFile()) {
-      filePath = path.join(ROOT, 'game.html');
+      filePath = path.join(ROOT, 'index.html');
       if (!fs.existsSync(filePath)) { res.writeHead(404); return res.end('Not found'); }
     }
     const ext = path.extname(filePath).toLowerCase();
@@ -250,7 +250,7 @@ server.listen(PORT, '0.0.0.0', () => {
     for (const iface of ifaces[name] || []) {
       if (iface.family === 'IPv4' && !iface.internal) {
         cardCount++;
-        const url = `http://${iface.address}:${PORT}/game.html`;
+        const url = `http://${iface.address}:${PORT}/`;
         hr.write(`  ║  网卡 ${String(cardCount).padEnd(2)} : ${url.padEnd(52, ' ').slice(0, 52)} ║\n`);
       }
     }
@@ -258,7 +258,7 @@ server.listen(PORT, '0.0.0.0', () => {
   if (cardCount === 0) {
     hr.write('  ║  (未找到 IPv4 网卡，仅本地可用)                              ║\n');
   } else {
-    hr.write('  ║  ⚠️  同 Wi-Fi 队友把上面任一条 http://...:8080/game.html     ║\n');
+    hr.write('  ║  ⚠️  同 Wi-Fi 队友把上面任一条 http://...:8080/             ║\n');
     hr.write('  ║      粘贴到手机/另一台电脑浏览器；无需手动改房间码。         ║\n');
   }
   hr.write('  ╚══════════════════════════════════════════════════════════════╝\n\n');

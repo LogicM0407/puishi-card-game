@@ -689,8 +689,12 @@
 <script>
 "use strict";
 
-const VERSION = "v2.0.1";
+const VERSION = "v2.1.0";
 const CHANGELOG = Object.freeze([
+  { version: "v2.1.0", items: [
+    "重构：将 game.html 单体文件拆分为模块化文件结构（index.html + css/style.css + js/ 目录6个文件）",
+    "server.js 默认入口由 game.html 改为 index.html"
+  ]},
   { version: "v2.0.1", items: [
     "调整：牌堆构成比例由原约69%事件牌/31%技能牌调整为30%事件牌/70%技能牌"
   ]},

@@ -1,18 +1,21 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  <title>谱师卡牌 - 正在加载...</title>
-  <script>
-    // 添加时间戳强制刷新缓存
-    var timestamp = Date.now();
-    window.location.replace('game.html?v=' + timestamp);
-  </script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101316">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>谱师卡牌</title>
+<link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <p>正在跳转到游戏页面... 如果没有自动跳转，请点击 <a href="game.html">这里</a></p>
+<main id="app" class="app"></main>
+
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/gameLogic.js"></script>
+<script src="js/network.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>
