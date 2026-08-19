@@ -1,3 +1,10 @@
+v1.2.2
+1. 同步：消除消息不同步残留问题（四处修复）
+   - 房主也通过消息队列追踪自己的操作：broadcastCoreMessage 中房主同步更新 executedSeqNum/executedMsgIds，保证所有玩家执行路径一致，房主转移后队列状态正确
+   - 增强 ACK 机制：scheduleAckRetry 达到最大重试次数后立即强制发送全量状态快照（RESYNC），不再等待 2 秒延迟的 scheduleHostResync；客户端收到 RESYNC/GAP_FILL 后绕过消息队列直接应用（clearMessageQueue + applyCoreMessage），避免触发 gap-fill 等待导致 UI 卡死
+   - 状态快照包含完整游戏上下文：generateSnapshot 存储 clone(game) 的完整深拷贝（包含 pendingEvent、disabledTurns/permanentlyDisabled、counters、lastActionAt 等全部字段），最多保留 5 份于 ui.snapshots；handleMissingMessagesRequest 始终发送 GAP_FILL 全量状态（移除 game.sequence > toSeq 条件），确保补发失败时客户端可恢复
+   - 优化 gap-fill：超时后若队列为空（补发失败），自动发送 SYNC_REQUEST 请求全量同步，不再卡死等待
+
 v1.2.1
 1. 修复：加入房间稳定失败问题（三处修复）
    - 竞态条件修复：WELCOME 处理时，先保存队列中 seqNum 大于快照序列号的消息，再 clearMessageQueue，最后重新入队并立即调用 processMessageQueue，避免早期 CORE_MESSAGE 被清空导致序列号断裂、UI 卡死

@@ -689,8 +689,16 @@
 <script>
 "use strict";
 
-const VERSION = "v1.2.1";
+const VERSION = "v1.2.2";
 const CHANGELOG = Object.freeze([
+  { version: "v1.2.2", items: [
+    "同步：房主也通过消息队列追踪自己的操作（executedSeqNum/executedMsgIds），保证所有玩家执行路径一致，房主转移后队列状态正确",
+    "同步：增强 ACK 机制——未收到 ACK 超时后立即强制发送全量状态快照（RESYNC），不再等待 2 秒延迟重连",
+    "同步：RESYNC/GAP_FILL 全量状态消息绕过消息队列直接应用，避免触发 gap-fill 等待导致 UI 卡死",
+    "同步：状态快照存储完整游戏上下文（pendingEvent、角色冷却 disabledTurns/permanentlyDisabled、counters、lastActionAt 等全部字段），最多保留 5 份",
+    "同步：handleMissingMessagesRequest 始终发送 GAP_FILL 全量状态，确保补发失败时客户端可恢复",
+    "同步：gap-fill 超时后若队列为空（补发失败），自动发送 SYNC_REQUEST 请求全量同步"
+  ]},
   { version: "v1.2.1", items: [
     "修复：加入房间稳定失败——WELCOME 处理时先保存队列中 seqNum 大于快照的消息，clearMessageQueue 后重新入队，避免早期 CORE_MESSAGE 被清空导致序列号断裂、UI 卡死",
     "修复：publicGameFor 请求者强制 connected=true，防止断线重连玩家（含 AI 托管）因 connected=false 被客户端误判为观战者而无法操作",
@@ -1227,7 +1235,8 @@ const ui = {
   executedSeqNum: 0,
   executedMsgIds: new Set(),
   gapFillTimer: null,
-  gapFillRequested: false
+  gapFillRequested: false,
+  snapshots: []
 };
 
 const room = {
@@ -3113,8 +3122,12 @@ function scheduleAckRetry(memberId, sequence, retries = 0) {
     const member = room.members.find(m => m.id === memberId);
     if (!member?.connected) return;
     if (retries >= ACK_MAX_RETRIES) {
-      ui.pendingSyncMembers.add(memberId);
-      scheduleHostResync();
+      // Force send full state snapshot immediately instead of waiting for delayed resync
+      const delivered = sendSyncMessage(memberId);
+      if (!delivered) {
+        ui.pendingSyncMembers.add(memberId);
+        scheduleHostResync();
+      }
       return;
     }
     const delivered = sendSyncMessage(memberId);
@@ -3284,6 +3297,13 @@ function broadcastCoreMessage(message, actorMemberId = "") {
       scheduleAckRetry(member.id, message.seqNum);
     }
   });
+  // Host also tracks the message through its own queue for consistency
+  ui.executedSeqNum = message.seqNum;
+  ui.executedMsgIds.add(message.msgId);
+  if (ui.executedMsgIds.size > 100) {
+    const arr = [...ui.executedMsgIds];
+    ui.executedMsgIds = new Set(arr.slice(-50));
+  }
   if (shouldGenerateSnapshot()) generateSnapshot();
   render();
   scheduleBotAction();
@@ -3305,6 +3325,17 @@ function generateSnapshot() {
   game.lastSnapshotSeqNum = game.sequence;
   game.lastSnapshotAt = Date.now();
   game.lastSnapshotRound = game.round;
+  // Store full game state clone (including pendingEvent, cooldowns, counters, etc.)
+  const state = clone(game);
+  state.coreMessages = [];
+  if (!ui.snapshots) ui.snapshots = [];
+  ui.snapshots.push({
+    seqNum: game.sequence,
+    round: game.round,
+    timestamp: Date.now(),
+    state
+  });
+  if (ui.snapshots.length > 5) ui.snapshots.shift();
   return {
     seqNum: game.sequence,
     round: game.round,
@@ -3336,19 +3367,18 @@ function handleMissingMessagesRequest(memberId, fromSeq, toSeq) {
       });
     });
   }
-  if (game.sequence > toSeq) {
-    sendCoreMessageToPlayer(memberId, {
-      msgId: `msg_${cryptoRandom(8)}`,
-      seqNum: game.sequence,
-      senderId: "system",
-      action: "GAP_FILL",
-      timestamp: Date.now(),
-      ok: true,
-      reason: "",
-      draw: null,
-      ackRequestId: ""
-    }, memberId);
-  }
+  // Always send GAP_FILL with full current state to ensure client can recover
+  sendCoreMessageToPlayer(memberId, {
+    msgId: `msg_${cryptoRandom(8)}`,
+    seqNum: game.sequence,
+    senderId: "system",
+    action: "GAP_FILL",
+    timestamp: Date.now(),
+    ok: true,
+    reason: "",
+    draw: null,
+    ackRequestId: ""
+  }, memberId);
 }
 
 function syncAll(actorMemberId = "", acknowledgedRequestId = "", action = "", result = null) {
@@ -3401,6 +3431,19 @@ function enqueueCoreMessage(message) {
     });
   }
   if (ui.executedMsgIds.has(message.msgId)) return;
+  // RESYNC / GAP_FILL: full-state messages — apply immediately, bypassing queue ordering
+  if (message.action === "RESYNC" || message.action === "GAP_FILL") {
+    clearMessageQueue(message.seqNum);
+    applyCoreMessage(message);
+    ui.executedSeqNum = message.seqNum;
+    ui.executedMsgIds.add(message.msgId);
+    if (ui.executedMsgIds.size > 100) {
+      const arr = [...ui.executedMsgIds];
+      ui.executedMsgIds = new Set(arr.slice(-50));
+    }
+    render();
+    return;
+  }
   if (message.seqNum <= ui.executedSeqNum) return;
   ui.messageQueue.push(message);
   ui.messageQueue.sort((a, b) => a.seqNum - b.seqNum);
@@ -3459,16 +3502,27 @@ function processMessageQueue() {
         clearTimeout(ui.gapFillTimer);
         ui.gapFillTimer = setTimeout(() => {
           ui.gapFillRequested = false;
-          while (ui.messageQueue.length > 0) {
-            const msg = ui.messageQueue.shift();
-            if (msg.seqNum > ui.executedSeqNum) {
-              applyCoreMessage(msg);
-              ui.executedSeqNum = msg.seqNum;
-              ui.executedMsgIds.add(msg.msgId);
-              if (ui.executedMsgIds.size > 100) {
-                const arr = [...ui.executedMsgIds];
-                ui.executedMsgIds = new Set(arr.slice(-50));
+          if (ui.messageQueue.length > 0) {
+            // Apply all queued messages directly, skipping sequence ordering
+            while (ui.messageQueue.length > 0) {
+              const msg = ui.messageQueue.shift();
+              if (msg.seqNum > ui.executedSeqNum) {
+                applyCoreMessage(msg);
+                ui.executedSeqNum = msg.seqNum;
+                ui.executedMsgIds.add(msg.msgId);
+                if (ui.executedMsgIds.size > 100) {
+                  const arr = [...ui.executedMsgIds];
+                  ui.executedMsgIds = new Set(arr.slice(-50));
+                }
               }
+            }
+          } else {
+            // Gap-fill failed: no missing messages received, request full sync
+            if (!room.isHost && room.connected) {
+              room.transport?.sendToHost({
+                type: "SYNC_REQUEST",
+                knownSequence: ui.executedSeqNum
+              });
             }
           }
           render();
@@ -4079,6 +4133,7 @@ function resetToLobby() {
   clearTimeout(ui.hostResyncTimer);
   ui.hostResyncTimer = null;
   clearMessageQueue(0);
+  ui.snapshots = [];
   room.lifecycle = ROOM_STATE.WAITING;
   const connected = room.members
     .filter(member => member.connected)
@@ -4277,6 +4332,7 @@ async function promoteToHost(roomSnapshot, gameBackup) {
     ui.pendingSyncMembers.clear();
     ui.lastAckedSequence.clear();
     clearMessageQueue(game?.sequence ?? 0);
+    ui.snapshots = [];
     if (game) {
       const previousHost = game.players.find(player => player.memberId !== room.myId && !room.members.find(member => member.id === player.memberId)?.connected);
       if (previousHost) {
