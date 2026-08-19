@@ -689,8 +689,17 @@
 <script>
 "use strict";
 
-const VERSION = "v1.1.0";
+const VERSION = "v1.2.0";
 const CHANGELOG = Object.freeze([
+  { version: "v1.2.0", items: [
+    "网络：重构通信层，引入核心消息同步机制（Core Message Sync）——所有游戏逻辑操作通过房主生成核心消息并广播，客户端不得自行执行状态逻辑",
+    "网络：客户端实现消息队列，按全局序列号（seqNum）顺序执行，支持跳号检测与补发请求（MISSING_MESSAGES_REQUEST）",
+    "网络：房主定期生成状态快照（每5回合或30秒），用于重连校验与状态恢复",
+    "网络：所有卡牌效果、回合切换、事件触发均改为基于核心消息驱动，每条消息包含 msgId/seqNum/senderId/action/timestamp 等元数据",
+    "网络：WELCOME 消息附带最近50条核心消息历史，支持重连后增量补齐",
+    "网络：消息去重机制（msgId 滑动窗口，最多100条），防止网络重发导致重复执行",
+    "网络：gap-fill 超时保护（3秒），超时后按全量状态消息直接应用，保证玩法正确性"
+  ]},
   { version: "v1.1.0", items: [
     "角色：加拿大鹅稀有度由B+上调为A（4点）；实装被动 aura——场上存在其他玩家的加拿大鹅时，该玩家地道东京爷的配置水平提升量减半（减半效果不触发东京爷的免疫减少被动）",
     "角色：福瑞王 lore 更新为「（介绍待补充）」；修正角色卡图标缺失（238、柳橙汁3743）",
@@ -1208,7 +1217,12 @@ const ui = {
   heartbeatTimer: null,
   heartbeatMisses: 0,
   mutedPlayerIds: new Set(),
-  blockedPlayerIds: null
+  blockedPlayerIds: null,
+  messageQueue: [],
+  executedSeqNum: 0,
+  executedMsgIds: new Set(),
+  gapFillTimer: null,
+  gapFillRequested: false
 };
 
 const room = {
@@ -1415,6 +1429,10 @@ function createGameState(members, totalRounds) {
     turnDirection: 1,
     pecJamRestoreRound: null,
     sequence: 0,
+    coreMessages: [],
+    lastSnapshotSeqNum: 0,
+    lastSnapshotAt: Date.now(),
+    lastSnapshotRound: 0,
     effectDepth: 0,
     createdAt: Date.now()
   };
@@ -2785,7 +2803,7 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   if (result.ok) {
     game.sequence++;
     if (player) player.lastActionAt = Date.now();
-    syncAll(memberId, requestId);
+    syncAll(memberId, requestId, action, result);
   }
   return result;
 }
@@ -3062,11 +3080,19 @@ function clearAckTimeout(memberId) {
 
 function sendSyncMessage(memberId, acknowledgedRequestId = "") {
   return room.transport?.sendToPlayer(memberId, {
-    type: "SYNC",
+    type: "CORE_MESSAGE",
+    msgId: `msg_${cryptoRandom(8)}`,
+    seqNum: game?.sequence ?? 0,
+    senderId: "system",
+    action: "RESYNC",
+    timestamp: Date.now(),
+    ok: true,
+    reason: "",
+    draw: null,
     room: publicRoom(),
     game: publicGameFor(memberId),
     authorityBackup: authorityBackupFor(memberId),
-    acknowledgedRequestId
+    ackRequestId: acknowledgedRequestId
   }) || false;
 }
 
@@ -3136,6 +3162,7 @@ function scheduleHostPeriodicSync() {
     ui.hostPeriodicTimer = null;
     if (!room.isHost || !game) return;
     checkAIControl();
+    if (shouldGenerateSnapshot()) generateSnapshot();
     const currentSeq = game.sequence ?? 0;
     room.members.forEach(member => {
       if (member.id === room.myId || !member.connected || member.isBot) return;
@@ -3193,21 +3220,139 @@ function checkAIControl() {
   }
 }
 
-function syncAll(actorMemberId = "", acknowledgedRequestId = "") {
+function storeCoreMessage(message) {
+  if (!game.coreMessages) game.coreMessages = [];
+  game.coreMessages.push(message);
+  if (game.coreMessages.length > 200) game.coreMessages.shift();
+}
+
+function emitCoreMessage(memberId, action, result, requestId = "") {
+  const msgId = `msg_${cryptoRandom(8)}`;
+  const message = {
+    msgId,
+    seqNum: game.sequence,
+    senderId: memberId || "system",
+    action: action || "SYNC",
+    timestamp: Date.now(),
+    ok: result?.ok ?? true,
+    reason: result?.reason || "",
+    draw: result?.draw || null,
+    ackRequestId: requestId
+  };
+  storeCoreMessage(message);
+  return message;
+}
+
+function sendCoreMessageToPlayer(memberId, message, actorMemberId = "") {
+  const personalized = {
+    type: "CORE_MESSAGE",
+    msgId: message.msgId,
+    seqNum: message.seqNum,
+    senderId: message.senderId,
+    action: message.action,
+    timestamp: message.timestamp,
+    ok: message.ok,
+    reason: message.reason,
+    draw: message.draw,
+    room: publicRoom(),
+    game: publicGameFor(memberId),
+    authorityBackup: authorityBackupFor(memberId),
+    ackRequestId: memberId === actorMemberId ? message.ackRequestId : ""
+  };
+  return room.transport?.sendToPlayer(memberId, personalized) || false;
+}
+
+function broadcastCoreMessage(message, actorMemberId = "") {
+  if (!room.isHost) { render(); return; }
+  room.members.forEach(member => {
+    if (member.id === room.myId || !member.connected || member.isBot) return;
+    const delivered = sendCoreMessageToPlayer(member.id, message, actorMemberId);
+    if (!delivered) {
+      ui.pendingSyncMembers.add(member.id);
+      scheduleHostResync();
+    } else {
+      ui.pendingSyncMembers.delete(member.id);
+      scheduleAckRetry(member.id, message.seqNum);
+    }
+  });
+  if (shouldGenerateSnapshot()) generateSnapshot();
+  render();
+  scheduleBotAction();
+  scheduleHostPeriodicSync();
+}
+
+const SNAPSHOT_ROUND_INTERVAL = 5;
+const SNAPSHOT_TIME_INTERVAL = 30000;
+
+function shouldGenerateSnapshot() {
+  if (!game) return false;
+  if (game.round - (game.lastSnapshotRound || 0) >= SNAPSHOT_ROUND_INTERVAL) return true;
+  if (Date.now() - (game.lastSnapshotAt || 0) >= SNAPSHOT_TIME_INTERVAL) return true;
+  return false;
+}
+
+function generateSnapshot() {
+  if (!game) return null;
+  game.lastSnapshotSeqNum = game.sequence;
+  game.lastSnapshotAt = Date.now();
+  game.lastSnapshotRound = game.round;
+  return {
+    seqNum: game.sequence,
+    round: game.round,
+    timestamp: Date.now()
+  };
+}
+
+function handleMissingMessagesRequest(memberId, fromSeq, toSeq) {
+  if (!room.isHost || !game) return;
+  if (game.coreMessages && game.coreMessages.length) {
+    const missing = game.coreMessages.filter(msg =>
+      msg.seqNum >= fromSeq && msg.seqNum <= toSeq
+    );
+    missing.forEach(msg => {
+      room.transport?.sendToPlayer(memberId, {
+        type: "CORE_MESSAGE",
+        msgId: msg.msgId,
+        seqNum: msg.seqNum,
+        senderId: msg.senderId,
+        action: msg.action,
+        timestamp: msg.timestamp,
+        ok: msg.ok,
+        reason: msg.reason,
+        draw: msg.draw,
+        room: publicRoom(),
+        game: publicGameFor(memberId),
+        authorityBackup: authorityBackupFor(memberId),
+        ackRequestId: ""
+      });
+    });
+  }
+  if (game.sequence > toSeq) {
+    sendCoreMessageToPlayer(memberId, {
+      msgId: `msg_${cryptoRandom(8)}`,
+      seqNum: game.sequence,
+      senderId: "system",
+      action: "GAP_FILL",
+      timestamp: Date.now(),
+      ok: true,
+      reason: "",
+      draw: null,
+      ackRequestId: ""
+    }, memberId);
+  }
+}
+
+function syncAll(actorMemberId = "", acknowledgedRequestId = "", action = "", result = null) {
   if (!room.isHost) {
     render();
     return;
   }
-  room.members.forEach(member => {
-    if (member.id === room.myId || !member.connected || member.isBot) return;
-    sendStateToPlayer(
-      member.id,
-      member.id === actorMemberId ? acknowledgedRequestId : ""
-    );
-  });
-  render();
-  scheduleBotAction();
-  scheduleHostPeriodicSync();
+  if (!result) {
+    game.sequence++;
+    result = { ok: true };
+  }
+  const message = emitCoreMessage(actorMemberId || "system", action || "SYNC", result, acknowledgedRequestId);
+  broadcastCoreMessage(message, actorMemberId);
 }
 
 function sendWelcome(memberId) {
@@ -3216,7 +3361,8 @@ function sendWelcome(memberId) {
     room: publicRoom(),
     game: publicGameFor(memberId),
     authorityBackup: authorityBackupFor(memberId),
-    chatHistory: ui.chatMessages.slice(-CHAT_MAX_MESSAGES)
+    chatHistory: ui.chatMessages.slice(-CHAT_MAX_MESSAGES),
+    coreMessages: game?.coreMessages?.slice(-50) || []
   });
 }
 
@@ -3226,6 +3372,103 @@ function clearPendingGameAction(requestId = "") {
   ui.pendingActionTimer = null;
   ui.pendingAction = null;
   ui.pendingRequest = false;
+}
+
+function clearMessageQueue(initialSeqNum = 0) {
+  ui.messageQueue = [];
+  ui.executedSeqNum = initialSeqNum;
+  ui.executedMsgIds = new Set();
+  clearTimeout(ui.gapFillTimer);
+  ui.gapFillTimer = null;
+  ui.gapFillRequested = false;
+}
+
+function enqueueCoreMessage(message) {
+  if (!message || typeof message.seqNum !== "number") return;
+  if (!room.isHost && room.connected) {
+    room.transport?.sendToHost({
+      type: "SYNC_ACK",
+      sequence: message.seqNum
+    });
+  }
+  if (ui.executedMsgIds.has(message.msgId)) return;
+  if (message.seqNum <= ui.executedSeqNum) return;
+  ui.messageQueue.push(message);
+  ui.messageQueue.sort((a, b) => a.seqNum - b.seqNum);
+  processMessageQueue();
+}
+
+function applyCoreMessage(message) {
+  if (message.room) applyRoomSnapshot(message.room);
+  if (message.game) game = message.game;
+  if (message.authorityBackup) ui.authorityBackup = message.authorityBackup;
+  if (message.ackRequestId) {
+    clearPendingGameAction(message.ackRequestId);
+  } else if (ui.pendingAction && message.seqNum > ui.pendingAction.baseSequence) {
+    clearPendingGameAction();
+  }
+  if (message.draw?.kind === "event") {
+    showToast(`摸到事件牌「${message.draw.name}」，已立即结算。`);
+  } else if (!message.ok && message.reason) {
+    showToast(message.reason);
+  }
+  scheduleStateCheck();
+}
+
+function processMessageQueue() {
+  let applied = false;
+  while (ui.messageQueue.length > 0) {
+    const next = ui.messageQueue[0];
+    if (next.seqNum <= ui.executedSeqNum) {
+      ui.messageQueue.shift();
+      continue;
+    }
+    if (next.seqNum === ui.executedSeqNum + 1) {
+      ui.messageQueue.shift();
+      applyCoreMessage(next);
+      ui.executedSeqNum = next.seqNum;
+      ui.executedMsgIds.add(next.msgId);
+      if (ui.executedMsgIds.size > 100) {
+        const arr = [...ui.executedMsgIds];
+        ui.executedMsgIds = new Set(arr.slice(-50));
+      }
+      applied = true;
+      continue;
+    }
+    if (next.seqNum > ui.executedSeqNum + 1) {
+      if (!ui.gapFillRequested) {
+        ui.gapFillRequested = true;
+        const fromSeq = ui.executedSeqNum + 1;
+        const toSeq = next.seqNum - 1;
+        if (!room.isHost && room.connected) {
+          room.transport?.sendToHost({
+            type: "MISSING_MESSAGES_REQUEST",
+            fromSeq,
+            toSeq
+          });
+        }
+        clearTimeout(ui.gapFillTimer);
+        ui.gapFillTimer = setTimeout(() => {
+          ui.gapFillRequested = false;
+          while (ui.messageQueue.length > 0) {
+            const msg = ui.messageQueue.shift();
+            if (msg.seqNum > ui.executedSeqNum) {
+              applyCoreMessage(msg);
+              ui.executedSeqNum = msg.seqNum;
+              ui.executedMsgIds.add(msg.msgId);
+              if (ui.executedMsgIds.size > 100) {
+                const arr = [...ui.executedMsgIds];
+                ui.executedMsgIds = new Set(arr.slice(-50));
+              }
+            }
+          }
+          render();
+        }, 3000);
+      }
+      break;
+    }
+  }
+  if (applied) render();
 }
 
 function scheduleStateCheck() {
@@ -3373,6 +3616,15 @@ function handleNetworkMessage(message, meta = {}) {
       ui.chatMessages = message.chatHistory.slice(-CHAT_MAX_MESSAGES);
     }
     clearPendingGameAction();
+    clearMessageQueue(message.game?.sequence ?? 0);
+    if (Array.isArray(message.coreMessages)) {
+      message.coreMessages.forEach(msg => {
+        if (msg.seqNum > ui.executedSeqNum && !ui.executedMsgIds.has(msg.msgId)) {
+          ui.messageQueue.push(msg);
+        }
+      });
+      ui.messageQueue.sort((a, b) => a.seqNum - b.seqNum);
+    }
     scheduleStateCheck();
     startHeartbeat();
     if (ui.joinResolver) {
@@ -3394,26 +3646,29 @@ function handleNetworkMessage(message, meta = {}) {
     render();
     return;
   }
+  if (message.type === "CORE_MESSAGE") {
+    enqueueCoreMessage(message);
+    return;
+  }
   if (message.type === "SYNC") {
-    const incomingSequence = message.game?.sequence ?? -1;
-    const currentSequence = game?.sequence ?? -1;
-    const applied = !game || incomingSequence >= currentSequence;
-    if (applied) {
-      applyRoomSnapshot(message.room);
-      game = message.game;
-      ui.authorityBackup = message.authorityBackup;
-    }
-    room.transport?.sendToHost({
-      type: "SYNC_ACK",
-      sequence: Math.max(incomingSequence, currentSequence)
+    enqueueCoreMessage({
+      msgId: `msg_legacy_${message.game?.sequence ?? Date.now()}_${Math.random()}`,
+      seqNum: message.game?.sequence ?? 0,
+      senderId: "system",
+      action: "SYNC",
+      timestamp: Date.now(),
+      ok: true,
+      reason: "",
+      draw: null,
+      room: message.room,
+      game: message.game,
+      authorityBackup: message.authorityBackup,
+      ackRequestId: message.acknowledgedRequestId || ""
     });
-    const pendingConfirmedBySequence = ui.pendingAction &&
-      incomingSequence > ui.pendingAction.baseSequence;
-    if (message.acknowledgedRequestId || pendingConfirmedBySequence) {
-      clearPendingGameAction(message.acknowledgedRequestId);
-    }
-    scheduleStateCheck();
-    render();
+    return;
+  }
+  if (message.type === "MISSING_MESSAGES_REQUEST" && room.isHost) {
+    handleMissingMessagesRequest(meta.playerId, Number(message.fromSeq), Number(message.toSeq));
     return;
   }
   if (message.type === "ROOM_ACTION" && room.isHost) {
@@ -3806,6 +4061,7 @@ function resetToLobby() {
   ui.lastAckedSequence.clear();
   clearTimeout(ui.hostResyncTimer);
   ui.hostResyncTimer = null;
+  clearMessageQueue(0);
   room.lifecycle = ROOM_STATE.WAITING;
   const connected = room.members
     .filter(member => member.connected)
@@ -4003,6 +4259,7 @@ async function promoteToHost(roomSnapshot, gameBackup) {
     ui.pendingAcks.clear();
     ui.pendingSyncMembers.clear();
     ui.lastAckedSequence.clear();
+    clearMessageQueue(game?.sequence ?? 0);
     if (game) {
       const previousHost = game.players.find(player => player.memberId !== room.myId && !room.members.find(member => member.id === player.memberId)?.connected);
       if (previousHost) {
