@@ -689,8 +689,11 @@
 <script>
 "use strict";
 
-const VERSION = "v1.2.2";
+const VERSION = "v1.2.3";
 const CHANGELOG = Object.freeze([
+  { version: "v1.2.3", items: [
+    "修复：全量状态同步消息因队列阻塞无法及时应用——emitCoreMessage 为 SYNC 且无 draw 的消息添加 isSnapshot 标记，enqueueCoreMessage 检测到 isSnapshot 后立即应用状态并清空队列，不再入队等待"
+  ]},
   { version: "v1.2.2", items: [
     "同步：房主也通过消息队列追踪自己的操作（executedSeqNum/executedMsgIds），保证所有玩家执行路径一致，房主转移后队列状态正确",
     "同步：增强 ACK 机制——未收到 ACK 超时后立即强制发送全量状态快照（RESYNC），不再等待 2 秒延迟重连",

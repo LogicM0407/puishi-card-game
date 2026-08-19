@@ -1,3 +1,9 @@
+v1.2.3
+1. 修复：全量状态同步消息因队列阻塞无法及时应用
+   - emitCoreMessage 为 action==="SYNC" 且 result.draw 为空的消息添加 isSnapshot: true 标记
+   - enqueueCoreMessage 检测到 isSnapshot 后立即调用 applyRoomSnapshot + game=message.game + clearMessageQueue + clearPendingGameAction + render，不再入队等待
+   - 确保快照消息仍发送 SYNC_ACK 通知房主已处理
+
 v1.2.2
 1. 同步：消除消息不同步残留问题（四处修复）
    - 房主也通过消息队列追踪自己的操作：broadcastCoreMessage 中房主同步更新 executedSeqNum/executedMsgIds，保证所有玩家执行路径一致，房主转移后队列状态正确
