@@ -3259,7 +3259,8 @@ function emitCoreMessage(memberId, action, result, requestId = "") {
     ok: result?.ok ?? true,
     reason: result?.reason || "",
     draw: result?.draw || null,
-    ackRequestId: requestId
+    ackRequestId: requestId,
+    isSnapshot: action === "SYNC" && !result?.draw
   };
   storeCoreMessage(message);
   return message;
@@ -3431,6 +3432,20 @@ function enqueueCoreMessage(message) {
     });
   }
   if (ui.executedMsgIds.has(message.msgId)) return;
+  // Snapshot messages: apply immediately, bypassing queue to prevent blocking
+  if (message.isSnapshot) {
+    if (message.room) applyRoomSnapshot(message.room);
+    if (message.game) game = message.game;
+    clearMessageQueue(game?.sequence ?? 0);
+    clearPendingGameAction();
+    ui.executedMsgIds.add(message.msgId);
+    if (ui.executedMsgIds.size > 100) {
+      const arr = [...ui.executedMsgIds];
+      ui.executedMsgIds = new Set(arr.slice(-50));
+    }
+    render();
+    return;
+  }
   // RESYNC / GAP_FILL: full-state messages — apply immediately, bypassing queue ordering
   if (message.action === "RESYNC" || message.action === "GAP_FILL") {
     clearMessageQueue(message.seqNum);
