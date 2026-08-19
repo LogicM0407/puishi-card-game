@@ -4757,7 +4757,7 @@ function openCardAction(cardUid) {
   const definition = skillDefinition(card?.cardId);
   if (!card || !definition) return;
   const mode = definition.targetMode;
-  if (!mode || mode === TARGET_MODE.NONE) {
+  if (mode === TARGET_MODE.NONE) {
     return sendGameAction("PLAY_CARD", { cardUid });
   }
   if (mode === TARGET_MODE.OWN_DIMENSION) {
