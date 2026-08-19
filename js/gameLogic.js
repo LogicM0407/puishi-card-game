@@ -1664,7 +1664,12 @@ function performBotAction() {
     ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && isAIActor(player))
     : -1;
   if (pendingIndex >= 0) {
-    resolveBotEvent(pendingIndex);
+    try {
+      resolveBotEvent(pendingIndex);
+    } catch (e) {
+      console.error("[BOT] resolveBotEvent threw:", e);
+    }
+    scheduleBotAction();
     return;
   }
   if (game.pendingEvent) return;
@@ -1757,6 +1762,19 @@ function performBotAction() {
           }
         } else if (def?.targetMode === TARGET_MODE.OWN_DIMENSION) {
           payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+        } else if (def?.targetMode === TARGET_MODE.OWN_AND_OPPONENT_CHARACTERS) {
+          const ownChar = player.characters.find(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+          if (!ownChar) continue;
+          payload.ownCharacterUid = ownChar.uid;
+          const opponents = game.players.filter((_, i) => i !== playerIndex);
+          const targetUids = [];
+          for (const opp of opponents) {
+            for (const c of opp.characters) {
+              if (targetUids.length < 3) targetUids.push(c.uid);
+            }
+          }
+          if (targetUids.length < 2) continue;
+          payload.targetCharacterUids = targetUids.slice(0, 2 + Math.floor(Math.random() * 2));
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }
@@ -1807,7 +1825,12 @@ function scheduleBotAction() {
       if (game.pendingEvent) {
         const pendingIdx = game.players.findIndex(p => p.memberId === game.pendingEvent.responderMemberId && isAIActor(p));
         if (pendingIdx >= 0) {
-          resolveBotEvent(pendingIdx);
+          try {
+            resolveBotEvent(pendingIdx);
+          } catch (e) {
+            console.error("[BOT] watchdog resolveBotEvent threw:", e);
+          }
+          scheduleBotAction();
           return;
         }
       }

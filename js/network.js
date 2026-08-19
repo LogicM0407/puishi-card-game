@@ -61,7 +61,7 @@ function broadcastStateEvent(event, actorId) {
       game: publicGameFor(member.id)
     });
   });
-  render();
+  try { render(); } catch (e) { console.error("[RENDER]", e); }
   scheduleBotAction();
   schedulePeriodicSyncCheck();
 }

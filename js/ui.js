@@ -593,6 +593,7 @@ function openReviewAction() {
 
 function renderActionModal() {
   const modal = ui.modal;
+  const me = myGamePlayer();
   let choices = "";
   if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;

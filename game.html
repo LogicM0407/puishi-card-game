@@ -2972,7 +2972,12 @@ function performBotAction() {
     ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && isAIActor(player))
     : -1;
   if (pendingIndex >= 0) {
-    resolveBotEvent(pendingIndex);
+    try {
+      resolveBotEvent(pendingIndex);
+    } catch (e) {
+      console.error("[BOT] resolveBotEvent threw:", e);
+    }
+    scheduleBotAction();
     return;
   }
   if (game.pendingEvent) return;
@@ -3175,7 +3180,7 @@ function broadcastStateEvent(event, actorId) {
       game: publicGameFor(member.id)
     });
   });
-  render();
+  try { render(); } catch (e) { console.error("[RENDER]", e); }
   scheduleBotAction();
   schedulePeriodicSyncCheck();
 }
