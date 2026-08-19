@@ -1,3 +1,18 @@
+v2.0.0
+1. 重构：联机同步层全面重构，采用"权威状态 + 顺序状态事件 + 缺号补发 + 完整快照恢复"架构
+   - 新增 SyncManager 模块，统一处理主机端和客户端的同步逻辑
+   - 新增六种核心消息类型：ACTION_REQUEST、STATE_EVENT、EVENT_REQUEST、SNAPSHOT_REQUEST、SNAPSHOT、STATE_ACK
+   - Host 端使用 commitGameState 统一提交游戏状态变化，每次状态变化产生递增 seq
+   - Client 端使用 receiveStateEvent/processSyncQueue 按严格 seq 顺序应用状态事件
+   - 缺号检测使用 EVENT_REQUEST 请求指定范围事件，Host 从 eventLog 补发
+   - 完整状态恢复使用 SNAPSHOT/SNAPSHOT_REQUEST，与正常事件同步彻底分离
+   - 客户端加入/重连使用 SNAPSHOT 消息恢复，取代旧 WELCOME+CORE_MESSAGE 机制
+   - 客户端操作请求使用 ACTION_REQUEST，取代旧 GAME_ACTION+ACTION_RESULT 双消息
+   - STATE_ACK 确认机制取代旧 SYNC_ACK+ACK retry 多层重试
+   - 删除旧的 CORE_MESSAGE、MISSING_MESSAGES_REQUEST、GAP_FILL、RESYNC、SYNC_STATUS、isSnapshot 绕过队列等机制
+   - 删除旧的 syncAll、emitCoreMessage、broadcastCoreMessage、enqueueCoreMessage、processMessageQueue 等函数
+   - eventLog 保存最近 500 个事件，支持增量补发；无法补发时自动发送完整快照
+
 v1.2.4
 1. 修复：房主开始游戏时客户端无显示（稳定触发）
    - sendCoreMessageToPlayer 未转发 isSnapshot 标记，导致客户端 isSnapshot 绕过队列为死代码——已补上 isSnapshot: message.isSnapshot || false
