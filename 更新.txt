@@ -1,3 +1,9 @@
+v1.2.1
+1. 修复：加入房间稳定失败问题（三处修复）
+   - 竞态条件修复：WELCOME 处理时，先保存队列中 seqNum 大于快照序列号的消息，再 clearMessageQueue，最后重新入队并立即调用 processMessageQueue，避免早期 CORE_MESSAGE 被清空导致序列号断裂、UI 卡死
+   - publicGameFor 修复：请求者（memberId 匹配的玩家）在游戏快照中强制 connected = true，防止断线重连玩家（含 AI 托管）因 connected=false 被客户端误判为观战者而无法操作
+   - 连接超时优化：waitForConnectionOpen 超时由 16 秒延长至 25 秒；joinRoom "房间无响应" 超时由 12 秒延长至 30 秒；friendlyConnectionError 超时提示优化为"连接房主超时，请确认房间码正确、房主在线，并检查网络后重试"
+
 v1.2.0
 1. 网络：重构通信层，引入核心消息同步机制（Core Message Sync）
    - 所有游戏逻辑操作通过房主生成核心消息并广播，客户端不得自行执行状态逻辑

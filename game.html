@@ -3028,7 +3028,11 @@ function publicGameFor(memberId) {
   const publicGame = clone(game);
   publicGame.players.forEach(player => {
     player.handCount = player.hand.length;
-    if (player.memberId !== memberId) player.hand = [];
+    if (player.memberId !== memberId) {
+      player.hand = [];
+    } else {
+      player.connected = true;
+    }
   });
   return publicGame;
 }
@@ -3616,15 +3620,23 @@ function handleNetworkMessage(message, meta = {}) {
       ui.chatMessages = message.chatHistory.slice(-CHAT_MAX_MESSAGES);
     }
     clearPendingGameAction();
-    clearMessageQueue(message.game?.sequence ?? 0);
+    const snapshotSeq = message.game?.sequence ?? 0;
+    const preservedMessages = ui.messageQueue.filter(msg => msg.seqNum > snapshotSeq);
+    clearMessageQueue(snapshotSeq);
     if (Array.isArray(message.coreMessages)) {
       message.coreMessages.forEach(msg => {
         if (msg.seqNum > ui.executedSeqNum && !ui.executedMsgIds.has(msg.msgId)) {
           ui.messageQueue.push(msg);
         }
       });
-      ui.messageQueue.sort((a, b) => a.seqNum - b.seqNum);
     }
+    preservedMessages.forEach(msg => {
+      if (msg.seqNum > ui.executedSeqNum && !ui.executedMsgIds.has(msg.msgId)) {
+        ui.messageQueue.push(msg);
+      }
+    });
+    ui.messageQueue.sort((a, b) => a.seqNum - b.seqNum);
+    processMessageQueue();
     scheduleStateCheck();
     startHeartbeat();
     if (ui.joinResolver) {
@@ -4157,10 +4169,10 @@ async function joinRoom(name, code, reconnect = false) {
       ui.joinResolver = resolve;
       setTimeout(() => {
         if (ui.joinResolver) {
-          ui.joinResolver(fail("房间无响应"));
+          ui.joinResolver(fail("房间无响应，请确认房主在线后重试"));
           ui.joinResolver = null;
         }
-      }, 12000);
+      }, 30000);
     });
     transport.sendToHost({ type: "JOIN", roomCode: code, playerId: room.myId, name, reconnect });
     const result = await joined;
@@ -4202,7 +4214,7 @@ function friendlyConnectionError(error) {
   if (message.includes("unavailable-id")) return "该房间码已被占用，请重试。";
   if (message.includes("peer-unavailable")) return "房间不存在或房主尚未就绪。";
   if (message.includes("PeerJS")) return "联机组件加载失败，请检查网络后刷新。";
-  if (message.includes("timeout") || message.includes("超时") || message.includes("无响应")) return "连接超时，请确认房间码和网络状态。";
+  if (message.includes("timeout") || message.includes("超时") || message.includes("无响应")) return "连接房主超时，请确认房间码正确、房主在线，并检查网络后重试。";
   return message;
 }
 
@@ -5312,7 +5324,7 @@ class PeerTransport {
   waitForConnectionOpen(connection) {
     return new Promise((resolve, reject) => {
       if (connection.open) return resolve();
-      const timer = setTimeout(() => reject(new Error("房间连接超时")), 16000);
+      const timer = setTimeout(() => reject(new Error("连接房主超时，请确认房间码正确且房主在线后重试")), 25000);
       connection.once("open", () => { clearTimeout(timer); resolve(); });
       connection.once("error", error => { clearTimeout(timer); reject(error); });
     });
