@@ -1038,8 +1038,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     player.commissionLockAtRound = game.round + Math.floor(remainingRounds * .7);
     if (player.commissionLockAtRound <= game.round) player.commissionLocked = true;
   } else if (definition.id === "drink") {
-    target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 1);
-    appendLog(`${target.name} 的 zpq 崩溃，下一回合不可发动技能。`, "effect");
+    target.disableCharacterTurns = Math.max(target.disableCharacterTurns, 1);
+    appendLog(`${target.name} 的 zpq 崩溃，下一回合角色技能禁用。`, "effect");
   } else if (definition.id === "fge") {
     player.storyboard = true;
     player.storyboardBonus = Math.max(player.storyboardBonus, 5 * skillCardPointMultiplier(player));
@@ -1087,6 +1087,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     if (Math.random() < 0.2) {
       applyScoreChange(playerIndex, "abstract", 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
       appendLog(`${player.name} 打出「Rizline？！」：具象+10，抽象+5。`, "effect");
+    } else {
+      appendLog(`${player.name} 打出「Rizline？！」：具象+10。`, "effect");
     }
   } else if (definition.id === "bilibili") {
     if (Math.random() >= 0.3) {
@@ -1134,12 +1136,17 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, "abstract", mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     if (ownsCharacter(player, "jinye")) applyScoreChange(playerIndex, "innovation", 2 * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "finish-chart") {
-    const others = player.hand.filter(c => c.uid !== cardUid);
-    others.forEach(c => game.discard.push(c));
-    player.hand = player.hand.filter(c => c.uid === cardUid);
+    const discardUids = Array.isArray(payload.discardUids) ? payload.discardUids : [];
+    const selected = player.hand.filter(c => c.uid !== cardUid && discardUids.includes(c.uid));
+    selected.forEach(c => {
+      const idx = player.hand.indexOf(c);
+      if (idx >= 0) player.hand.splice(idx, 1);
+      game.discard.push(c);
+    });
+    player.handCount = player.hand.length;
     const mult = skillCardPointMultiplier(player);
-    applyScoreChange(playerIndex, "config", 3 * others.length * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「写完了」：弃置${others.length}张牌，配置水平+${3 * others.length}。`, "effect");
+    applyScoreChange(playerIndex, "config", 3 * selected.length * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「写完了」：弃置${selected.length}张牌，配置水平+${3 * selected.length}。`, "effect");
   } else if (definition.id === "concise") {
     if (player.hand.length > 1) {
       const others = player.hand.filter(c => c.uid !== cardUid);

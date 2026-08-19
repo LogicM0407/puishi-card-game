@@ -138,7 +138,18 @@ function schedulePeriodicSyncCheck() {
 // --- Client-side sync functions ---
 
 function receiveStateEvent(event) {
-  if (event.seq <= syncClient.lastAppliedSeq) return;
+  if (event.seq <= syncClient.lastAppliedSeq) {
+    // 失败结果可能复用当前 seq（房主未递增序列）。若携带当前等待操作的 requestId，
+    // 仍需立即清除等待态并提示原因，避免客户端“卡住”或“没反应”。
+    if (event.requestId && ui.pendingAction?.requestId === event.requestId) {
+      clearPendingGameAction(event.requestId);
+      if (event.result && !event.result.ok && event.result.reason) {
+        showToast(event.result.reason);
+      }
+      render();
+    }
+    return;
+  }
   syncClient.pendingEvents.set(event.seq, event);
   processSyncQueue();
 }

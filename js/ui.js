@@ -538,6 +538,12 @@ function openCardAction(cardUid) {
     ui.modal = { kind: "skill-own-opponent-characters", cardUid, title: definition.name, description: definition.description, ownCharacters, opponentCharacters, selectedOwnUid: null, selectedOpponentUids: [] };
     return render();
   }
+  if (definition.id === "finish-chart") {
+    const discardable = me.hand.filter(item => item.uid !== cardUid);
+    if (!discardable.length) return sendGameAction("PLAY_CARD", { cardUid });
+    ui.modal = { kind: "skill-discard-cards", cardUid, title: definition.name, description: definition.description, cards: discardable, selectedUids: [] };
+    return render();
+  }
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
   const targets = game.players.filter(player => player.memberId !== me.memberId);
   ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
@@ -647,6 +653,14 @@ function renderActionModal() {
     choices = `<div class="event-step"><div class="event-step-title">① 选择自己的1张角色卡</div><div class="target-list">${ownButtons}</div></div>
       <div class="event-step"><div class="event-step-title">② 选择其他玩家的2~3张角色卡</div><div class="target-list">${opponentButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-discard-cards") {
+    const cardButtons = modal.cards.map(card => {
+      const def = skillDefinition(card.cardId);
+      const selected = modal.selectedUids.includes(card.uid);
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-skill-discard="${card.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择要弃置的牌（每弃置1张，配置水平+3）</div><div class="target-list">${cardButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   } else if (modal.kind === "event-choose") {
@@ -749,6 +763,17 @@ function renderActionModal() {
       render();
     };
   });
+  document.querySelectorAll("[data-skill-discard]").forEach(button => {
+    button.onclick = () => {
+      const uid = button.dataset.skillDiscard;
+      if (modal.selectedUids.includes(uid)) {
+        modal.selectedUids = modal.selectedUids.filter(u => u !== uid);
+      } else {
+        modal.selectedUids.push(uid);
+      }
+      render();
+    };
+  });
   document.querySelectorAll("[data-motion-points]").forEach(button => {
     button.onclick = () => {
       ui.modal = null;
@@ -801,6 +826,8 @@ function renderActionModal() {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId: modal.selectedTarget, dimension: modal.selectedDimension });
     } else if (modal.kind === "skill-own-opponent-characters") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, ownCharacterUid: modal.selectedOwnUid, targetCharacterUids: modal.selectedOpponentUids });
+    } else if (modal.kind === "skill-discard-cards") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, discardUids: modal.selectedUids });
     } else if (modal.kind === "event-choose") {
       sendGameAction("RESOLVE_EVENT", {
         ownCharacterUid: modal.selectedCharacterUid,
