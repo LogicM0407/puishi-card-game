@@ -250,10 +250,10 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
 
   if (amount > 0 && ownsCharacter(player, "disinfectant")) {
     player.counters.disinfectantGain += amount;
-    while (player.counters.disinfectantGain >= 15) {
-      player.counters.disinfectantGain -= 15;
+    while (player.counters.disinfectantGain >= 10) {
+      player.counters.disinfectantGain -= 10;
       drawCards(playerIndex, 2, true);
-      appendLog(`${player.name} 累计提升15点能力值，抽2张牌。`, "effect");
+      appendLog(`${player.name} 累计提升10点能力值，抽2张牌。`, "effect");
     }
   }
 
@@ -312,8 +312,8 @@ function runCrossingPassives(playerIndex, dimension, beforeAll) {
       player.counters.ziweiHighest[dimension] = true;
       drawCards(playerIndex, 2, true);
       const bonusDimension = randomDimension();
-      applyScoreChange(playerIndex, bonusDimension, 8, { sourcePlayerIndex: playerIndex });
-      appendLog(`${player.name} 的${DIMENSION_LABELS[dimension]}成为全场最高，抽2张牌且随机维度+8。`, "effect");
+      applyScoreChange(playerIndex, bonusDimension, 5, { sourcePlayerIndex: playerIndex });
+      appendLog(`${player.name} 的${DIMENSION_LABELS[dimension]}成为全场最高，抽2张牌且随机维度+5。`, "effect");
     }
   }
 }
@@ -385,8 +385,8 @@ function resolveEvent(playerIndex, card) {
       }));
       appendLog(`${player.name} 触发「面基」：所有维度+1。`, "event");
     } else {
-      player.disableCharacterTurns = Math.max(player.disableCharacterTurns, 3);
-      appendLog(`${player.name} 触发「面基」：3回合无法发动角色牌技能。`, "event");
+      player.disableCharacterTurns = Math.max(player.disableCharacterTurns, 1);
+      appendLog(`${player.name} 触发「面基」：1回合无法发动角色牌技能。`, "event");
     }
   } else if (event.id === "recruit") {
     const available = player.characters.filter(instance => !instance.permanentlyDisabled);
@@ -464,15 +464,17 @@ function resolveEvent(playerIndex, card) {
       }
     }
   } else if (event.id === "rpe") {
-    const hasPeCharacter = player.characters.some(character => characterDefinition(character.id)?.isPE);
-    if (hasPeCharacter) {
-      appendLog(`${player.name} 的PE谱师使「RPE崩了」不产生效果。`, "event");
-    } else {
-      const dimension = randomItem(["config", "abstract", "concrete"]);
-      const nextValue = Math.floor(player.scores[dimension] / 2);
-      setScore(playerIndex, dimension, nextValue, { sourcePlayerIndex: playerIndex });
-      appendLog(`${player.name} 触发「RPE崩了」：${DIMENSION_LABELS[dimension]}减半至${nextValue}。`, "event");
-    }
+    game.players.forEach((target, targetIndex) => {
+      const hasPeCharacter = target.characters.some(character => characterDefinition(character.id)?.isPE);
+      if (hasPeCharacter) {
+        appendLog(`${target.name} 的PE谱师使「崩所有人RPE」对其不产生效果。`, "event");
+      } else {
+        const dimension = randomItem(["config", "abstract", "concrete"]);
+        const nextValue = Math.floor(target.scores[dimension] / 2);
+        setScore(targetIndex, dimension, nextValue, { sourcePlayerIndex: playerIndex });
+        appendLog(`${target.name} 触发「崩所有人RPE」：${DIMENSION_LABELS[dimension]}减半至${nextValue}。`, "event");
+      }
+    });
   } else if (event.id === "clock-link") {
     game.players.forEach(target => {
       target.extraTurnCredits++;
@@ -495,12 +497,12 @@ function resolveEvent(playerIndex, card) {
     player.skipNextTurn = true;
     appendLog(`${player.name} 触发「电脑被没收了」：创新程度+5，下一回合被跳过。`, "event");
   } else if (event.id === "chart-missing") {
-    const lowStaminaCount = player.characters.filter(instance => {
+    const hasLowStamina = player.characters.some(instance => {
       const def = characterDefinition(instance.id);
-      return def && def.stats.stamina <= 7;
-    }).length;
-    if (lowStaminaCount < 2) {
-      appendLog(`${player.name} 触发「谱面找不到了」，但不满足≥2名角色爆肝≤7的条件，无效果。`, "event");
+      return def && def.stats.stamina <= 5;
+    });
+    if (!hasLowStamina) {
+      appendLog(`${player.name} 触发「谱面找不到了」，但爆肝程度未≤5，无效果。`, "event");
     } else {
       const discarded = player.hand.splice(0);
       discarded.forEach(card => game.discard.push(card));
@@ -820,7 +822,7 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
   if (ability.choice === "motion-distribution") {
     const abstractPoints = Number(payload.abstractPoints);
-    if (!Number.isInteger(abstractPoints) || abstractPoints < 0 || abstractPoints > 5) return fail("请分配5个动效点数");
+    if (!Number.isInteger(abstractPoints) || abstractPoints < 0 || abstractPoints > 10) return fail("请分配10个动效点数");
   }
   if (ability.choice === "opponent") {
     const target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
@@ -843,13 +845,13 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     appendLog(`${player.name} 发动Ftayo技能：2个维度提升至全场最高。`, "effect");
   } else if (ability.id === "summercube-main") {
     applyScoreChange(playerIndex, "config", -1, { sourcePlayerIndex: playerIndex });
-    applyScoreChange(playerIndex, "concrete", 5, { sourcePlayerIndex: playerIndex });
-    appendLog(`${player.name} 发动Summercube技能：配置-1，具象动效+5。`, "effect");
+    applyScoreChange(playerIndex, "concrete", 10, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动Summercube技能：配置-1，具象动效+10。`, "effect");
   } else if (ability.id === "sulfur-main") {
     const abstractPoints = Number(payload.abstractPoints);
     applyScoreChange(playerIndex, "abstract", abstractPoints, { sourcePlayerIndex: playerIndex });
-    applyScoreChange(playerIndex, "concrete", 5 - abstractPoints, { sourcePlayerIndex: playerIndex });
-    appendLog(`${player.name} 发动SulfurDXD技能：分配5点动效。`, "effect");
+    applyScoreChange(playerIndex, "concrete", 10 - abstractPoints, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动SulfurDXD技能：分配10点动效。`, "effect");
   } else if (ability.id === "jinye-main") {
     const amount = Math.random() < .2 ? -2 : 5;
     applyScoreChange(playerIndex, "abstract", amount, { sourcePlayerIndex: playerIndex });
@@ -870,11 +872,11 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     }
     appendLog(`${player.name} 发动樱桃喝酒人技能。`, "effect");
   } else if (ability.id === "naogui-main") {
-    applyScoreChange(playerIndex, "config", 3, { sourcePlayerIndex: playerIndex });
-    appendLog(`${player.name} 发动恼鬼技能：配置水平+3。`, "effect");
+    applyScoreChange(playerIndex, "config", 2, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动恼鬼技能：配置水平+2。`, "effect");
   } else if (ability.id === "two-three-eight-main") {
-    applyScoreChange(playerIndex, "abstract", 3, { sourcePlayerIndex: playerIndex });
-    appendLog(`${player.name} 发动238技能：抽象动效+3。`, "effect");
+    applyScoreChange(playerIndex, "abstract", 5, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动238技能：抽象动效+5。`, "effect");
   } else if (ability.id === "tokyo-main") {
     // 加拿大鹅 aura：场上存在其他玩家的加拿大鹅时，本玩家的东京爷配置水平提升量减半
     // 该减半不触发东京爷的免疫减少被动（applyScoreChange 不走负数分支即可）
@@ -882,11 +884,11 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     applyScoreChange(playerIndex, "config", halved ? 2 : 4, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 发动地道东京爷技能：配置水平+${halved ? 2 : 4}。`, "effect");
   } else if (ability.id === "furry-main") {
-    if (Math.random() < .7) {
+    if (Math.random() < .75) {
       drawCards(playerIndex, 1);
       appendLog(`${player.name} 发动福瑞王技能：额外抽1张牌。`, "effect");
     } else {
-      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, dim === "innovation" ? 2 : -1, { sourcePlayerIndex: playerIndex }));
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, dim === "innovation" ? 3 : -1, { sourcePlayerIndex: playerIndex }));
       appendLog(`${player.name} 发动福瑞王技能并触发“创新”。`, "effect");
     }
   } else if (ability.id === "canada-wjc") {
@@ -915,7 +917,7 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     } else {
       const cards = game.players.flatMap(target => target.characters).filter(character => !character.permanentlyDisabled);
       shuffle(cards);
-      cards.slice(0, Math.floor(game.players.length / 3)).forEach(character => {
+      cards.slice(0, Math.max(0, game.players.length - 1)).forEach(character => {
         character.disabledTurns = Math.max(character.disabledTurns, 1);
       });
       appendLog(`${player.name} 发动“魅惑”。`, "effect");
@@ -953,9 +955,9 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   } else if (ability.id === "hotwind-main") {
     gainReputation(playerIndex, -1);
     game.players.forEach((target, targetIndex) => {
-      if (target.reviewTurns > 0) applyScoreChange(targetIndex, "abstract", -2, { sourcePlayerIndex: playerIndex });
+      if (target.reviewTurns > 0) applyScoreChange(targetIndex, "abstract", -8, { sourcePlayerIndex: playerIndex });
     });
-    appendLog(`${player.name} 发动热风小西八技能：评议玩家抽象动效-2。`, "effect");
+    appendLog(`${player.name} 发动热风小西八技能：评议玩家抽象动效-8。`, "effect");
   } else if (ability.id === "liuzhizhi-main") {
     const targetIndex = game.players.findIndex(candidate => candidate.memberId === payload.targetMemberId);
     if (targetIndex < 0) return fail("目标不存在");
@@ -1037,7 +1039,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   }
 
   if (definition.id === "review") {
-    player.reviewTurns = Math.max(player.reviewTurns, 2);
+    player.reviewTurns = Math.max(player.reviewTurns, 3);
   } else if (definition.id === "commission") {
     const average = game.players.reduce((sum, candidate) => sum + candidate.scores.selection, 0) / game.players.length;
     setScore(playerIndex, "selection", average, {
@@ -1053,20 +1055,22 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     target.disableCharacterTurns = Math.max(target.disableCharacterTurns, 1);
     appendLog(`${target.name} 的 zpq 崩溃，下一回合角色技能禁用。`, "effect");
   } else if (definition.id === "fge") {
+    if (player.storyboard) return fail("F鸽每名玩家仅能触发一次");
     player.storyboard = true;
     player.storyboardBonus = Math.max(player.storyboardBonus, 5 * skillCardPointMultiplier(player));
   } else if (definition.id === "study") {
     const dim = randomDimension(true);
-    applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
-    appendLog(`${player.name} 打出「学习」：${DIMENSION_LABELS[dim]}+5。`, "effect");
+    applyScoreChange(playerIndex, dim, 3 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
+    appendLog(`${player.name} 打出「学习」：${DIMENSION_LABELS[dim]}+3。`, "effect");
   } else if (definition.id === "effort") {
-    const dim = payload.dimension || randomItem(CHANGEABLE_DIMENSIONS);
-    const opponents = game.players.filter(p => p.memberId !== player.memberId);
-    if (!opponents.length) return fail("没有其他玩家可作为目标");
-    const targetPlayer = randomItem(opponents);
-    const amount = Math.floor(targetPlayer.scores[dim] * skillCardPointMultiplier(player));
+    const ownChar = player.characters.find(c => c.uid === payload.characterUid);
+    if (!ownChar) return fail("请选择自己的一名谱师");
+    const dim = payload.dimension && CHANGEABLE_DIMENSIONS.includes(payload.dimension) ? payload.dimension : null;
+    if (!dim) return fail("请选择一项属性");
+    const def = characterDefinition(ownChar.id);
+    const amount = def.stats[dim] || 0;
     applyScoreChange(playerIndex, dim, amount, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「发力」：从${targetPlayer.name}的${DIMENSION_LABELS[dim]}获得${amount}点。`, "effect");
+    appendLog(`${player.name} 打出「发力」：将${def.name}的${DIMENSION_LABELS[dim]}${amount}点加到自身。`, "effect");
   } else if (definition.id === "consult") {
     let count = 0;
     DIMENSIONS.forEach(dim => {
@@ -1149,44 +1153,28 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     game.players.forEach((p, i) => {
       if (i !== playerIndex) CHANGEABLE_DIMENSIONS.forEach(dim => applyScoreChange(i, dim, mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
     });
-    gainReputation(playerIndex, 5);
+    gainReputation(playerIndex, 3);
   } else if (definition.id === "jinye-mentor") {
     const mult = skillCardPointMultiplier(player);
     applyScoreChange(playerIndex, "concrete", mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     applyScoreChange(playerIndex, "abstract", mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     if (ownsCharacter(player, "jinye")) applyScoreChange(playerIndex, "innovation", 2 * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "finish-chart") {
-    const discardUids = Array.isArray(payload.discardUids) ? payload.discardUids : [];
-    const selected = player.hand.filter(c => c.uid !== cardUid && discardUids.includes(c.uid));
-    selected.forEach(c => {
-      const idx = player.hand.indexOf(c);
-      if (idx >= 0) player.hand.splice(idx, 1);
-      game.discard.push(c);
-    });
-    player.handCount = player.hand.length;
-    const mult = skillCardPointMultiplier(player);
-    applyScoreChange(playerIndex, "config", 3 * selected.length * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「写完了」：弃置${selected.length}张牌，配置水平+${3 * selected.length}。`, "effect");
+    const gain = Math.floor(player.scores.abstract / 3);
+    applyScoreChange(playerIndex, "config", gain, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「写完了」：抽象动效每3点换算1点配置，配置+${gain}。`, "effect");
   } else if (definition.id === "concise") {
-    if (player.hand.length > 1) {
-      const others = player.hand.filter(c => c.uid !== cardUid);
-      const toDiscard = others.slice(0, Math.max(0, others.length - 1));
-      toDiscard.forEach(c => game.discard.push(c));
-      const kept = others.slice(Math.max(0, others.length - 1));
-      player.hand = player.hand.filter(c => c.uid === cardUid).concat(kept);
-      gainReputation(playerIndex, 3);
-      appendLog(`${player.name} 打出「简洁逼」：弃置${toDiscard.length}张牌，声望+3。`, "effect");
-    } else {
-      appendLog(`${player.name} 打出「简洁逼」：手牌数不大于1，无效果。`, "effect");
-    }
+    applyScoreChange(playerIndex, "concrete", -3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "config", 4 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「简洁逼」：具象动效-3，配置+4。`, "effect");
   } else if (definition.id === "learn-from") {
     applyScoreChange(playerIndex, "innovation", 4 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "watch-toilet") {
     const hasRecruited = game.players.some(p => p.characters.some(c => c.recruited));
-    gainReputation(playerIndex, hasRecruited ? 10 : -5);
-    appendLog(`${player.name} 打出「我要看城尾鱼上厕所」：场上${hasRecruited ? "有" : "无"}被招安谱师，声望${hasRecruited ? "+10" : "-5"}。`, "effect");
+    gainReputation(playerIndex, hasRecruited ? 3 : -3);
+    appendLog(`${player.name} 打出「我要看城尾鱼上厕所」：场上${hasRecruited ? "有" : "无"}被招安谱师，声望${hasRecruited ? "+3" : "-3"}。`, "effect");
   } else if (definition.id === "image") {
-    gainReputation(playerIndex, 5);
+    gainReputation(playerIndex, 2);
   } else if (definition.id === "record") {
     applyScoreChange(playerIndex, "selection", 7 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
   } else if (definition.id === "unthread") {
@@ -1200,7 +1188,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, randomDimension(), -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     drawCards(playerIndex, 2);
   } else if (definition.id === "sv") {
-    gainReputation(playerIndex, 5);
+    gainReputation(playerIndex, 1);
     const avg = DIMENSIONS.reduce((sum, d) => sum + player.scores[d], 0) / DIMENSIONS.length;
     const mult = skillCardPointMultiplier(player);
     const direction = player.scores.config > avg ? 5 : -5;
@@ -1212,8 +1200,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     if (remainder > 0) gainReputation(playerIndex, remainder);
     appendLog(`${player.name} 打出「老资历我给您桂霞了」：声望+${remainder}。`, "effect");
   } else if (definition.id === "attention") {
-    if (player.reputation <= 60) return fail("声望需大于60才可打出");
-    const extra = Math.floor((player.reputation - 60) / 5);
+    if (player.reputation <= 40) return fail("声望需大于40才可打出");
+    const extra = Math.floor((player.reputation - 40) / 5);
     applyScoreChange(playerIndex, "innovation", (3 + extra) * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「全体目光向我看齐」：创新+${3 + extra}。`, "effect");
   } else if (definition.id === "god-chart-attack") {
@@ -1224,25 +1212,29 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   } else if (definition.id === "report") {
     if (Math.random() < 0.8) {
       target.characters.forEach(c => { c.disabledTurns = Math.max(c.disabledTurns, 1); });
-      appendLog(`${player.name} 对${target.name}打出「网报」：所有角色牌1回合禁用技能。`, "effect");
+      gainReputation(targetIdx, -10);
+      appendLog(`${player.name} 对${target.name}打出「网报」：所有角色牌1回合禁用技能，对方声望-10。`, "effect");
     } else {
+      gainReputation(playerIndex, -20);
       const available = player.characters.filter(c => !c.permanentlyDisabled);
       if (available.length) {
         randomItem(available).permanentlyDisabled = true;
-        appendLog(`${player.name} 打出「网报」被发现：随机1个角色牌永久失效。`, "effect");
+        appendLog(`${player.name} 打出「网报」被发现：随机1个角色牌永久失效，自己声望-20。`, "effect");
+      } else {
+        appendLog(`${player.name} 打出「网报」被发现：没有可失效的角色，自己声望-20。`, "effect");
       }
     }
   } else if (definition.id === "no-time") {
     if (game.totalRounds - game.round >= 4) return fail("剩余轮数<4时方可打出");
-    applyScoreChange(targetIdx, "config", -3 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    applyScoreChange(targetIdx, "concrete", -3 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(targetIdx, "config", -5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(targetIdx, "concrete", -5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "amp") {
     const hasSpecial = target.characters.some(c => ["ftayo", "jinye", "ruishi"].includes(c.id));
     const hasZiwei = target.characters.some(c => c.id === "ziwei");
     if (hasZiwei) {
       appendLog(`${player.name} 对${target.name}打出「&.」：但对方有子微中，声望不受影响。`, "effect");
     } else {
-      const amount = hasSpecial ? -5 : -3;
+      const amount = hasSpecial ? -3 : -2;
       gainReputation(targetIdx, amount);
       appendLog(`${player.name} 对${target.name}打出「&.」：声望${amount}。`, "effect");
     }
@@ -1251,14 +1243,15 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     setScore(targetIdx, "config", avg, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 对${target.name}打出「BPM轰炸」：配置水平调整为平均值${avg.toFixed(1)}。`, "effect");
   } else if (definition.id === "random-chart") {
+    const snapshot = { ...target.scores };
     DIMENSIONS.forEach(dim => {
       const otherDims = DIMENSIONS.filter(d => d !== dim);
       const sourceDim = randomItem(otherDims);
-      setScore(targetIdx, dim, target.scores[sourceDim], { sourcePlayerIndex: playerIndex, allowSelectionChange: dim !== "selection" });
+      setScore(targetIdx, dim, snapshot[sourceDim], { sourcePlayerIndex: playerIndex, allowSelectionChange: dim !== "selection" });
     });
-    appendLog(`${player.name} 对${target.name}打出「随机数写谱」：每维度独立随机映射。`, "effect");
+    appendLog(`${player.name} 对${target.name}打出「随机数写谱」：先记录原数值再每维度独立随机映射。`, "effect");
   } else if (definition.id === "ibeam") {
-    gainReputation(playerIndex, -2);
+    gainReputation(playerIndex, -3);
     applyScoreChange(targetIdx, "config", -12 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "private-sample") {
     applyScoreChange(playerIndex, "selection", -3, { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
@@ -1269,16 +1262,18 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   } else if (definition.id === "devil-arrival") {
     const mult = skillCardPointMultiplier(player);
     game.players.forEach((p, i) => {
-      if (i !== playerIndex) CHANGEABLE_DIMENSIONS.forEach(dim => applyScoreChange(i, dim, -mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
+      if (i !== playerIndex) CHANGEABLE_DIMENSIONS.forEach(dim => applyScoreChange(i, dim, -3 * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
     });
-    gainReputation(playerIndex, -3);
+    gainReputation(playerIndex, -1);
   } else if (definition.id === "storm") {
     const n = player.hand.length; // 包含打出的这张牌
-    applyScoreChange(targetIdx, randomDimension(true), -n * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 对${target.name}打出「暴风雨」：随机维度-${n}。`, "effect");
+    for (let i = 0; i < n; i++) {
+      applyScoreChange(targetIdx, randomDimension(true), -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    }
+    appendLog(`${player.name} 对${target.name}打出「暴风雨」：随机维度-1，共触发${n}次。`, "effect");
   } else if (definition.id === "burst") {
     if (target.reputation < player.reputation + 8) return fail("目标声望至少高出你8");
-    gainReputation(targetIdx, -8);
+    gainReputation(targetIdx, -4);
     applyScoreChange(playerIndex, "innovation", 4 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
   } else if (definition.id === "tower-curse") {
     const ownChar = player.characters.find(c => c.uid === payload.ownCharacterUid);
@@ -1342,11 +1337,46 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     game.turn.skillCardsPlayed++;
     appendLog(`${player.name} 打出「Remap」：弃置${handSize}张，抽${handSize + 1}张。`, "effect");
   } else if (definition.id === "hasty-draft") {
-    applyScoreChange(playerIndex, "config", -2, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    applyScoreChange(playerIndex, "abstract", -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    applyScoreChange(playerIndex, "concrete", -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "config", -3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "abstract", -3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "concrete", -3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     drawCards(playerIndex, 5);
-    appendLog(`${player.name} 打出「潦草急就」：配置-2/抽象-1/具象-1，抽5张牌。`, "effect");
+    appendLog(`${player.name} 打出「潦草急就」：配置/抽象/具象各-3，抽5张牌。`, "effect");
+  } else if (definition.id === "beibei") {
+    applyScoreChange(playerIndex, "innovation", 8 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「贝贝」：创新程度+8。`, "effect");
+  } else if (definition.id === "dcc") {
+    gainReputation(playerIndex, 1);
+    player.dccProtectionTurns = 3;
+    appendLog(`${player.name} 打出「我提交了二十张DCC」：声望+1，3轮内他人需声望更高才能对你用牌。`, "effect");
+  } else if (definition.id === "kkp") {
+    applyScoreChange(playerIndex, "config", 4 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(targetIdx, "config", 2, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    target.skipNextTurn = true;
+    appendLog(`${player.name} 打出「kkp」：自身配置+4，${target.name}配置+2并跳过下一回合。`, "effect");
+  } else if (definition.id === "comment-off") {
+    gainReputation(playerIndex, -5);
+    player.negativeImmuneTurns = 3;
+    player.dimensionLocked = true;
+    appendLog(`${player.name} 打出「已关闭评论区」：声望-5，3轮内免疫负面技能，维度锁定至下一回合。`, "effect");
+  } else if (definition.id === "star-hit") {
+    const handColors = player.hand.filter(c => c.uid !== cardUid).map(c => skillDefinition(c.cardId)?.rarity);
+    let concreteBonus = 0, configBonus = 0;
+    for (const r of handColors) {
+      if (r === "orange") concreteBonus += 8;
+      else if (r === "purple" || r === "blue") concreteBonus += 8;
+      else if (r === "green" || r === "white") configBonus += 5;
+    }
+    const hasSpecial = ["ftayo", "two-three-eight", "naogui", "ziyang"].some(id => ownsCharacter(player, id));
+    const bonus = hasSpecial ? 4 : 0;
+    if (concreteBonus + bonus > 0) applyScoreChange(playerIndex, "concrete", concreteBonus + bonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    if (configBonus + bonus > 0) applyScoreChange(playerIndex, "config", configBonus + bonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「撞星」：根据手牌卡色获得配置/具象加成。`, "effect");
+  } else if (definition.id === "limen") {
+    applyScoreChange(playerIndex, "abstract", 6 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "concrete", 6 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    player.silencedNextTurn = true;
+    appendLog(`${player.name} 打出「里门」：抽象+6、具象+6，下回合进入静默状态。`, "effect");
   }
 
   if (definition.id !== "remap") {
@@ -1366,7 +1396,7 @@ function handleNonPlayCardLoss(playerIndex, count) {
   const triggers = Math.min(count, 5 - player.counters.twoThreeEightLoss);
   for (let i = 0; i < triggers; i++) {
     player.counters.twoThreeEightLoss++;
-    applyScoreChange(playerIndex, randomDimension(), 4, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, randomDimension(), 3, { sourcePlayerIndex: playerIndex });
   }
   if (triggers > 0) appendLog(`${player.name} 因非打出方式失去${triggers}张牌，随机维度获得加成。`, "effect");
 }
@@ -1385,11 +1415,24 @@ function executeReviewVote(playerIndex, payload = {}) {
       sourcePlayerIndex: playerIndex,
       fromSkillCard: true
     });
-    target.disableAllSkillTurns = Math.max(target.disableAllSkillTurns, 3);
-    appendLog(`${player.name} 向${target.name}送出红票：配置水平+10，连续3回合不可发动技能。`, "effect");
+    target.disableCharacterTurns = Math.max(target.disableCharacterTurns, 2);
+    gainReputation(playerIndex, -1);
+    appendLog(`${player.name} 向${target.name}送出红票：配置水平+10，连续2回合不可发动角色技能，自己声望-1。`, "effect");
+    if (target.characters.some(c => c.id === "hotwind" || c.id === "dagezi")) {
+      player.counters.redVotesToHotwindDagezi = (player.counters.redVotesToHotwindDagezi || 0) + 1;
+      if (player.counters.redVotesToHotwindDagezi >= 2) {
+        player.counters.redVotesToHotwindDagezi = 0;
+        const burstCard = createCard("skill", "burst");
+        target.hand.push(burstCard);
+        target.handCount = target.hand.length;
+        appendLog(`${target.name} 累计收到两次红票，获得一张「跟你爆了！！！」。`, "effect");
+      }
+    }
   } else if (payload.vote === "green") {
-    target.extraDrawNextTurn++;
-    appendLog(`${player.name} 向${target.name}送出绿票：下回合额外摸1张牌。`, "effect");
+    gainReputation(targetIndex, 1);
+    gainReputation(playerIndex, 2);
+    drawCards(playerIndex, 1, true);
+    appendLog(`${player.name} 向${target.name}送出绿票：对方声望+1，自己声望+2并抽1张牌。`, "effect");
   } else {
     return fail("请选择红票或绿票");
   }
@@ -1805,6 +1848,11 @@ function performBotAction() {
           const allChars = game.players.flatMap(p => p.characters).filter(c => !c.permanentlyDisabled);
           if (!allChars.length) continue;
           payload.characterUid = randomItem(allChars).uid;
+        } else if (def?.targetMode === TARGET_MODE.OWN_CHARACTER_AND_DIMENSION) {
+          const ownChar = player.characters.find(c => !c.permanentlyDisabled);
+          if (!ownChar) continue;
+          payload.characterUid = ownChar.uid;
+          payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }

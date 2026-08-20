@@ -555,10 +555,10 @@ function openCardAction(cardUid) {
     ui.modal = { kind: "skill-any-character", cardUid, title: definition.name, description: definition.description, characters, selectedCharacterUid: null };
     return render();
   }
-  if (definition.id === "finish-chart") {
-    const discardable = me.hand.filter(item => item.uid !== cardUid);
-    if (!discardable.length) return sendGameAction("PLAY_CARD", { cardUid });
-    ui.modal = { kind: "skill-discard-cards", cardUid, title: definition.name, description: definition.description, cards: discardable, selectedUids: [] };
+  if (mode === TARGET_MODE.OWN_CHARACTER_AND_DIMENSION) {
+    const ownCharacters = me.characters.filter(c => !c.permanentlyDisabled);
+    if (!ownCharacters.length) return showToast("没有可选择的谱师");
+    ui.modal = { kind: "skill-own-character-dimension", cardUid, title: definition.name, description: definition.description, characters: ownCharacters, selectedCharacterUid: null, selectedDimension: null };
     return render();
   }
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
@@ -622,7 +622,7 @@ function renderActionModal() {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
     choices = `<div class="target-list">
-      ${[0, 1, 2, 3, 4, 5].map(value => `<button class="target-btn" data-motion-points="${value}"><span>抽象 ${value} · 具象 ${5 - value}</span><span class="target-score">5点</span></button>`).join("")}
+      ${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(value => `<button class="target-btn" data-motion-points="${value}"><span>抽象 ${value} · 具象 ${10 - value}</span><span class="target-score">10点</span></button>`).join("")}
     </div>`;
   } else if (modal.kind === "two-dimensions") {
     choices = `<div class="target-list">${CHANGEABLE_DIMENSIONS.map(dim => `<button class="target-btn ${modal.selected.includes(dim) ? "selected" : ""}" data-toggle-dimension="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selected.includes(dim) ? "已选" : "选择"}</span></button>`).join("")}</div>
@@ -687,6 +687,23 @@ function renderActionModal() {
     }).join("");
     choices = `<div class="event-step"><div class="event-step-title">选择要参考的角色</div><div class="target-list">${charButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-own-character-dimension") {
+    const charButtons = modal.characters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedCharacterUid === instance.uid;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-effort-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const selectedChar = modal.characters.find(c => c.uid === modal.selectedCharacterUid);
+    const selectedDef = selectedChar ? characterDefinition(selectedChar.id) : null;
+    const dimButtons = CHANGEABLE_DIMENSIONS.map(dim => {
+      const selected = modal.selectedDimension === dim;
+      const val = selectedDef ? selectedDef.stats[dim] : 0;
+      return `<button class="target-btn ${selected ? "selected" : ""}" ${modal.selectedCharacterUid ? "" : "disabled"} data-effort-dim="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selectedCharacterUid ? `${selected ? "已选" : val}点` : "先选角色"}</span></button>`;
+    }).join("");
+    const canConfirm = modal.selectedCharacterUid && modal.selectedDimension;
+    choices = `<div class="event-step"><div class="event-step-title">① 选择自己的一名谱师</div><div class="target-list">${charButtons}</div></div>
+      <div class="event-step"><div class="event-step-title">② 选择ta的一项属性</div><div class="target-list">${dimButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "skill-discard-cards") {
     const cardButtons = modal.cards.map(card => {
       const def = skillDefinition(card.cardId);
@@ -814,6 +831,12 @@ function renderActionModal() {
   document.querySelectorAll("[data-any-char]").forEach(button => {
     button.onclick = () => { modal.selectedCharacterUid = button.dataset.anyChar; render(); };
   });
+  document.querySelectorAll("[data-effort-char]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.effortChar; modal.selectedDimension = null; render(); };
+  });
+  document.querySelectorAll("[data-effort-dim]").forEach(button => {
+    button.onclick = () => { modal.selectedDimension = button.dataset.effortDim; render(); };
+  });
   document.querySelectorAll("[data-motion-points]").forEach(button => {
     button.onclick = () => {
       ui.modal = null;
@@ -870,6 +893,8 @@ function renderActionModal() {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
     } else if (modal.kind === "skill-any-character") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
+    } else if (modal.kind === "skill-own-character-dimension") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid, dimension: modal.selectedDimension });
     } else if (modal.kind === "skill-discard-cards") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, discardUids: modal.selectedUids });
     } else if (modal.kind === "event-choose") {

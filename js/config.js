@@ -168,7 +168,7 @@ const CHARACTERS = Object.freeze([
     lore: "不停地鹿！Summercube发动奇思妙想，让🦌进入了欧面，打破了单调无趣的演出后面忘了。",
     abilities: [{
       id: "summercube-main", cooldown: 3,
-      description: "每3回合可以发动1次，将1点配置水平兑换为5点具象动效水平。"
+      description: "每3回合可以发动1次，将1点配置水平兑换为10点具象动效水平。"
     }],
     passive: "动效水平无提升上限。每提高15点动效水平，配置水平提升3点。"
   },
@@ -178,7 +178,7 @@ const CHARACTERS = Object.freeze([
     lore: "救救我艾琳啊啊啊啊啊啊啊",
     abilities: [{
       id: "sulfur-main", cooldown: 3, choice: "motion-distribution",
-      description: "每3回合可以发动1次，将5个点数自行分配到具象动效水平或抽象动效水平。"
+      description: "每3回合可以发动1次，将10个点数自行分配到具象动效水平或抽象动效水平。"
     }],
     passive: "动效水平的综合分换算占比+15%。"
   },
@@ -190,7 +190,7 @@ const CHARACTERS = Object.freeze([
       id: "jinye-main", cooldown: 2,
       description: "每2回合可以发动1次，将抽象动效水平提升5点；有20%概率触发Testify AT17，此时抽象动效水平降低2点。"
     }],
-    passive: "限2次，场上有玩家的能力值降低时，抽1张牌；自己的回合开始时计数重置。"
+    passive: "每轮限两次，场上有玩家的能力值降低时，抽1张牌。"
   },
   {
     id: "ruishi", name: "瑞矢级别大", rarity: "A", glyph: "arrow-up-wide-narrow",
@@ -217,8 +217,8 @@ const CHARACTERS = Object.freeze([
     stats: { config: 10, abstract: 8, concrete: 4, innovation: 6, selection: 9, stamina: 7 },
     lore: "线上保持着高冷人设的搞笑男，WJC辛勤工作的staff之一",
     abilities: [{
-      id: "naogui-main", cooldown: 3,
-      description: "每3回合可以发动1次，使配置水平提升3点。"
+      id: "naogui-main", cooldown: 2,
+      description: "每2回合可以发动1次，使配置水平提升2点。"
     }],
     passive: "每轮次一次，自己的能力值提升时，抽1张牌。"
   },
@@ -228,9 +228,9 @@ const CHARACTERS = Object.freeze([
     lore: "他创造了圈内第一名梗",
     abilities: [{
       id: "two-three-eight-main", cooldown: 3,
-      description: "每3回合可以发动1次，使抽象表演水平提升3点；同时拥有Ftayo时，改为每2回合发动1次。"
+      description: "每3回合可以发动1次，使抽象表演水平提升5点；同时拥有Ftayo时，改为每2回合发动1次。"
     }],
-    passive: "每回合5次，自己通过非打出的方式失去1张牌时，随机维度+2。"
+    passive: "每回合5次，自己通过非打出的方式失去1张牌时，随机维度+3。"
   },
   {
     id: "tokyo", name: "地道东京爷", rarity: "A", glyph: "landmark",
@@ -248,7 +248,7 @@ const CHARACTERS = Object.freeze([
     lore: "（介绍待补充）",
     abilities: [{
       id: "furry-main", cooldown: 1,
-      description: "每1回合有70%的概率额外抽取1张牌，30%的概率触发“创新”：创新程度+2，其余点数-1。"
+      description: "每1回合有75%的概率额外抽取1张牌，否则触发“创新”：创新程度+3，其余点数-1。"
     }],
     passive: "创新能力增加时，抽1张牌。"
   },
@@ -258,45 +258,45 @@ const CHARACTERS = Object.freeze([
     lore: "我操。",
     abilities: [
       {
-        id: "canada-wjc", cooldown: 6,
-        description: "每6回合可以发动1次WJC，使场上其他玩家的非加拿大鹅角色卡在下一回合无法发动技能。在这一轮次内，玩家的角色卡（除了加拿大鹅）均会变为纯黑色且顺序被打乱，其所有技能将被禁用。"
+        id: "canada-wjc", cooldown: 4,
+        description: "每4回合可以发动1次WJC，使场上其他玩家的非加拿大鹅角色卡在下一回合无法发动技能。在这一轮次内，玩家的角色卡（除了加拿大鹅）均会变为纯黑色且顺序被打乱，其所有技能将被禁用。"
       },
       {
         id: "canada-shift", cooldown: 3, choice: "up-to-two-targets",
         description: "每3回合选择至多2名玩家，使其谱面随机维度-1，并使加拿大鹅的谱面随机维度+2。"
       }
     ],
-    passive: "每当事件牌发动时，自己的随机1个维度+8。"
+    passive: "每当事件牌发动时，自己的随机1个维度+5。"
   },
   {
     id: "disinfectant", name: "消毒水", rarity: "B+", glyph: "flask-conical",
     stats: { config: 8, abstract: 8, concrete: 4, innovation: 7, selection: 7, stamina: 5 },
     lore: "我就是喜欢AT17",
     abilities: [{
-      id: "disinfectant-main", cooldown: 1,
-      description: "每1回合可以发动1次“魅惑”，使场上随机[玩家人数/3]张卡牌下一回合无法发动技能。"
+      id: "disinfectant-main", cooldown: 2,
+      description: "每2回合可以发动1次“魅惑”，使场上其他玩家随机[玩家人数-1]张卡牌下一回合无法发动技能。"
     }],
-    passive: "每当自己累计提升15点能力值，抽2张牌。"
+    passive: "每当自己累计提升10点能力值，抽2张牌。"
   },
   {
     id: "ziwei", name: "子微中", rarity: "B+", glyph: "flower-2",
     stats: { config: 7, abstract: 7, concrete: 4, innovation: 6, selection: 7, stamina: 7 },
     lore: "小芳好可爱",
     abilities: [{
-      id: "ziwei-main", cooldown: 3,
-      description: "每3回合可以发动1次，80%概率在随机维度上提升3点，20%概率触发“子微”，技能发动失败。"
+      id: "ziwei-main", cooldown: 2,
+      description: "每2回合可以发动1次，80%概率在随机维度上提升3点，20%概率触发“子微”，技能发动失败。"
     }],
-    passive: "每回合内打出第三张牌时，抽1张牌。每条维度限一次，自己的维度成为全场最高时，抽2张牌，随机维度+8。"
+    passive: "每回合内打出第三张牌时，抽1张牌。每条维度限一次，自己的维度成为全场最高时，抽2张牌，随机维度+5。"
   },
   {
     id: "chi-mahu", name: "吃马虎", rarity: "B", glyph: "repeat-2",
     stats: { config: 7, abstract: 6, concrete: 4, innovation: 8, selection: 6, stamina: 5 },
     lore: "醋比饺子多的边缘谱师，有着不俗的配置能力。被恼鬼拉黑了。",
     abilities: [{
-      id: "chi-mahu-main", cooldown: 1, choice: "opponent",
-      description: "每回合的出牌阶段，可以声望为代价指定1名玩家交换全部手牌；首次消耗1点，每次发动后下一次代价翻倍。"
+      id: "chi-mahu-main", cooldown: 3, choice: "opponent",
+      description: "每3回合可以发动1次技能，以2点声望为代价，指定1名玩家与你交换全部手牌。每次发动后下一次发动所需声望翻倍。"
     }],
-    passive: "配置水平的提升值-50%（向下取整）。配置能力每提升8点，所有维度+5。"
+    passive: "每名其他玩家的回合限一次，你的任意维度数值被改变时，你的声望+1。"
   },
   {
     id: "dagezi", name: "大鸽子喵喵喵", rarity: "C", glyph: "message-circle-more",
@@ -304,7 +304,7 @@ const CHARACTERS = Object.freeze([
     lore: "简单的六维评分已经无法形容此人的伟大。",
     abilities: [{
       id: "dagezi-main", cooldown: 1,
-      description: "每回合可以发动1次，使谱面所有评价维度降至当前最低值，并获得1点声望。"
+      description: "每回合可以发动1次，使谱面选曲品味外的所有维度点数降至当前最低值，并获得1点声望。"
     }],
     passive: "最终结算时，自己的综合分每低于前一名3分，使随机1名对手的综合分-2。"
   },
@@ -314,7 +314,7 @@ const CHARACTERS = Object.freeze([
     lore: "我遭到了有组织有预谋的攻击。",
     abilities: [{
       id: "hotwind-main", cooldown: 1,
-      description: "每回合可以发动1次，以1点声望为代价，使所有带有“评议”身份的玩家抽象动效水平-2。"
+      description: "每回合可以发动1次，以1点声望为代价，使所有带有“评议”身份的玩家抽象动效水平-8。"
     }],
     passive: "每当配置水平累计提升5点，获得1点声望。"
   },
@@ -324,19 +324,29 @@ const CHARACTERS = Object.freeze([
     lore: "若有人三分似你，我便心颤魂惊。元老级别的谱师，早期自制圈塞爆的代名词，隐退后他的名字仍然响彻各个群聊，一提到挨踢十七，脑海中便不自觉地浮现他的冰西瓜。",
     abilities: [{
       id: "jiaojian-main", cooldown: 1,
-      description: "弃置最多3张技能牌，弃置3张时抽1张牌。"
+      description: "弃置至多3张技能牌并抽等量的牌。"
     }],
-    passive: "直至你的第四个回合结束，配置水平受到的增加效果翻倍且不会被减少。"
+    passive: "直至你的第四个回合结束，配置水平不会被减少且受到的增加效果翻倍。"
   },
   {
     id: "liuzhizhi", name: "柳橙汁3743", rarity: "C", glyph: "glass-water",
     stats: { config: 1, abstract: 1, concrete: 1, innovation: 2, selection: 1, stamina: 16 },
     lore: "这个也是谱师吗",
     abilities: [{
-      id: "liuzhizhi-main", cooldown: 3, choice: "opponent",
-      description: "查看一名玩家的白色和绿色手牌，从中选择一张变成自己的牌然后将其打出。"
+      id: "liuzhizhi-main", cooldown: 2, choice: "opponent",
+      description: "每2回合查看一名其他玩家的所有技能牌，从中选择一张白色/绿色技能牌变成自己的牌然后将其打出。"
     }],
     passive: "版权警告！声望增加时，使随机一名其他玩家谱面的随机一个维度分数-2。"
+  },
+  {
+    id: "ziyang", name: "子阳", rarity: "A", glyph: "sun",
+    stats: { config: 6, abstract: 11, concrete: 11, innovation: 11, selection: 8, stamina: 9 },
+    lore: "（介绍待补充）",
+    abilities: [{
+      id: "ziyang-main", cooldown: 1,
+      description: "每回合可发动1次，你每拥有2点创新能力，获得1点具象表演水平和1点抽象表演水平。"
+    }],
+    passive: "你的具象表演水平的提升值翻倍。"
   }
 ]);
 
@@ -347,15 +357,16 @@ const TARGET_MODE = Object.freeze({
   OWN_DIMENSION: "OWN_DIMENSION",
   OWN_CHARACTER: "OWN_CHARACTER",
   OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS",
-  ANY_CHARACTER: "ANY_CHARACTER"
+  ANY_CHARACTER: "ANY_CHARACTER",
+  OWN_CHARACTER_AND_DIMENSION: "OWN_CHARACTER_AND_DIMENSION"
 });
 
 const SKILL_CARDS = Object.freeze([
   // ===== 成长（Growth）=====
   { id: "study", name: "学习", rarity: "white", category: "growth", target: "self", glyph: "book-open",
-    description: "你的谱面中随机一个维度+5。" },
-  { id: "effort", name: "发力", rarity: "white", category: "growth", target: "self", glyph: "zap", targetMode: "OWN_DIMENSION",
-    description: "选择自己除选曲品味外的任一属性，随机一名谱师的对应属性值加到你的该属性上。" },
+    description: "你的谱面中随机一个维度+3。" },
+  { id: "effort", name: "发力", rarity: "green", category: "growth", target: "self", glyph: "zap", targetMode: "OWN_CHARACTER_AND_DIMENSION",
+    description: "选择你的一名谱师（角色牌），选择ta除选曲品味外的任一属性加到你的对应维度上。" },
   { id: "consult", name: "请教", rarity: "white", category: "growth", target: "opponent", glyph: "hand-helping",
     description: "选择一名玩家，你每个比他低的维度都获得+2。" },
   { id: "only-this", name: "只会这个", rarity: "white", category: "growth", target: "self", glyph: "arrow-up",
@@ -383,19 +394,19 @@ const SKILL_CARDS = Object.freeze([
   { id: "start-chart", name: "开始写谱了", rarity: "white", category: "growth", target: "self", glyph: "pen-tool",
     description: "你的配置水平、具象动效水平、抽象动效水平、创新程度+1。" },
   { id: "city-hero", name: "城市英雄", rarity: "white", category: "growth", target: "self", glyph: "heart",
-    description: "令除自己之外的其他玩家4项谱面维度+1，你的声望+5。" },
+    description: "令除自己之外的其他玩家4项谱面维度+1，你的声望+3。" },
   { id: "jinye-mentor", name: "金叶的新人指导", rarity: "white", category: "growth", target: "self", glyph: "graduation-cap",
     description: "具象动效水平、抽象动效水平+1；若自己拥有金叶谱师卡牌，创新程度额外+2。" },
   { id: "finish-chart", name: "写完了", rarity: "blue", category: "growth", target: "self", glyph: "check-circle",
-    description: "你可弃置任意张牌，每弃置一张牌，你的配置水平+3。" },
+    description: "根据你的抽象动效水平，每3点会加1点配置水平。" },
   { id: "concise", name: "简洁逼", rarity: "white", category: "growth", target: "self", glyph: "scissors",
-    description: "若你的手牌数大于1，你需将牌数弃置为1，由于你对于简洁风格的凸显，获得3点声望。" },
+    description: "你令自己的具象动效水平-3，并令配置水平+4。" },
   { id: "learn-from", name: "取经", rarity: "white", category: "growth", target: "self", glyph: "book",
     description: "你加入了新的音游企划！创新程度+4。" },
   { id: "watch-toilet", name: "我要看城尾鱼上厕所", rarity: "blue", category: "growth", target: "self", glyph: "message-square",
-    description: "场上若没有玩家拥有被招安的谱师，则你的声望-5；场上若有玩家拥有被招安的谱师，则你的声望+10。" },
+    description: "场上若没有玩家拥有被招安的谱师，则你的声望-3；场上若有玩家拥有被招安的谱师，则你的声望+3。" },
   { id: "image", name: "[图片]", rarity: "blue", category: "growth", target: "self", glyph: "image",
-    description: "发色图来增加群友好感度吧！声望+5。" },
+    description: "发色图来增加群友好感度吧！声望+2。" },
   { id: "record", name: "出门录管乐", rarity: "white", category: "growth", target: "self", glyph: "mic",
     description: "师承木子荣浩的音乐审美。选曲品味+7。" },
   { id: "unthread", name: "我拆线", rarity: "green", category: "growth", target: "self", glyph: "unlink",
@@ -405,43 +416,43 @@ const SKILL_CARDS = Object.freeze([
   { id: "forced-chart", name: "强迫式写谱", rarity: "blue", category: "growth", target: "self", glyph: "refresh-cw",
     description: "自己的随机一项数值-1并摸两张牌。" },
   { id: "sv", name: "SV", rarity: "blue", category: "growth", target: "self", glyph: "activity",
-    description: "声望+5。若你的配置水平大于你所有谱面维度的平均值，配置水平与抽象动效水平+5，反之则-5。" },
+    description: "声望+1。若你的配置水平大于你所有谱面维度的平均值，配置水平与抽象动效水平+5，反之则-5。" },
   { id: "seniority", name: "老资历我给您桂霞了", rarity: "purple", category: "growth", target: "self", glyph: "award",
     description: "使声望增加（配置水平+具象动效水平+抽象动效水平+创新程度数值的和除以10的余数）点。" },
   { id: "attention", name: "全体目光向我看齐！", rarity: "green", category: "growth", target: "self", glyph: "megaphone",
-    description: "只有在声望大于60时可以打出。使创新程度+3，自己的声望与60相比每高出5点，额外+1。" },
+    description: "只有在声望大于40时可以打出。使创新程度+3，自己的声望与40相比每高出5点，额外+1。" },
   { id: "fge", name: "F鸽", rarity: "blue", category: "growth", target: "self", glyph: "panel-top",
-    description: "你的谱面成为“故事板”谱面。在分数结算时，你的谱面获得五点分数加成。" },
+    description: "你的谱面成为“故事板”谱面。在分数结算时，你的谱面获得五点分数加成。每名玩家仅能触发一次。" },
   // ===== 进攻（Attack）=====
   { id: "drink", name: "饮水", rarity: "purple", category: "attack", target: "opponent", glyph: "circle-off",
     description: "你可以指定一名成员使他的zpq崩溃，他在下一回合不可发动技能。" },
   { id: "god-chart-attack", name: "神谱。", rarity: "white", category: "attack", target: "opponent", glyph: "sparkle",
     description: "对任意一名对手的任意一个谱面维度使用，随机使该属性-8~+2。" },
-  { id: "report", name: "网报", rarity: "green", category: "attack", target: "opponent", glyph: "flag",
-    description: "有80%概率该玩家的所有角色牌1回合内无法发动技能；否则你被发现，你随机1个角色牌将永远无法发动技能。" },
-  { id: "no-time", name: "要来不及了！", rarity: "white", category: "attack", target: "opponent", glyph: "alarm-clock",
-    description: "剩余轮数<4时方可打出。使一名其他玩家谱面的配置水平与具象表演水平各-3。" },
+  { id: "report", name: "网报", rarity: "blue", category: "attack", target: "opponent", glyph: "flag",
+    description: "有80%概率该玩家的所有角色牌1回合内无法发动技能，且对方扣除10点声望；否则你被发现，你随机1个角色牌将永远无法发动技能，且自己扣除20点声望。" },
+  { id: "no-time", name: "要来不及了！", rarity: "green", category: "attack", target: "opponent", glyph: "alarm-clock",
+    description: "剩余轮数<4时方可打出。使一名其他玩家谱面的配置水平与具象表演水平各-5。" },
   { id: "amp", name: "&.", rarity: "blue", category: "attack", target: "opponent", glyph: "quote",
-    description: "指定某一对象，使其声望-3。特别的，如果对象的角色为Ftayo/金叶/瑞矢级别大，声望额外-2；如果对象的角色为子微中，声望不受影响。" },
-  { id: "bpm-bomb", name: "BPM轰炸", rarity: "blue", category: "attack", target: "opponent", glyph: "gauge",
+    description: "指定某一对象，使其声望-2。特别的，如果对象的角色为Ftayo/金叶/瑞矢级别大，声望额外-1；如果对象的角色为子微中，声望不受影响。" },
+  { id: "bpm-bomb", name: "BPM轰炸", rarity: "purple", category: "attack", target: "opponent", glyph: "gauge",
     description: "选择一名玩家，将他的配置水平调整为当前平均值。" },
   { id: "random-chart", name: "随机数写谱", rarity: "white", category: "attack", target: "opponent", glyph: "dices", targetMode: "PLAYER",
     description: "将任意一名玩家的所有谱面维度数值重新随机调整为其另一维度的数值。" },
-  { id: "ibeam", name: "工字钢", rarity: "green", category: "attack", target: "opponent", glyph: "minus",
-    description: "你的声望-2，该玩家配置水平-12。" },
+  { id: "ibeam", name: "工字钢", rarity: "white", category: "attack", target: "opponent", glyph: "minus",
+    description: "你的声望-3，该玩家配置水平-12。" },
   { id: "private-sample", name: "私人采样", rarity: "white", category: "attack", target: "self", glyph: "file-audio",
     description: "你的选曲品味-3，所有其他玩家创新程度-3。" },
   { id: "devil-arrival", name: "魔王降临", rarity: "white", category: "attack", target: "self", glyph: "skull",
-    description: "令除自己之外的其他玩家4项谱面维度-1，你的声望-3。" },
+    description: "令除自己之外的其他玩家4项谱面维度-3，你的声望-1。" },
   { id: "storm", name: "暴风雨", rarity: "blue", category: "attack", target: "opponent", glyph: "cloud-rain",
-    description: "选择一名玩家，被选择的玩家随机维度失去N分，N=你拥有的手牌数量（包含打出的这张牌）。" },
+    description: "选择一名玩家，被选择的玩家随机维度失去1分，此效果总共触发N次。N=你拥有的手牌数量（包含打出的这张牌）。" },
   { id: "burst", name: "跟你爆了！！！", rarity: "purple", category: "attack", target: "opponent", glyph: "bomb",
-    description: "选择一名声望至少高出你8的玩家，使其声望-8，自己的创新程度+4。" },
+    description: "选择一名声望至少高出你8的玩家，使其声望-4，自己的创新程度+4。" },
   { id: "tower-curse", name: "塔之诅咒", rarity: "blue", category: "attack", target: "self", glyph: "lock", targetMode: "OWN_AND_OPPONENT_CHARACTERS",
     description: "东尼意思。打出后可选择自身1张角色卡以及其他玩家2~3张角色卡，在下一回合中禁用这些角色的技能（冷却技能照常充能）。" },
   // ===== 技能（Skill）=====
   { id: "review", name: "评议", rarity: "orange", category: "skill", target: "self", glyph: "tickets",
-    description: "你成为评议2回合。每一回合你可指定1名玩家送出绿票/红票。若送出红票，该玩家的谱面配置水平提高10点，但连续3回合不可发动技能。若送出绿票，该玩家可以在下回合额外摸1张牌。该效果不可叠加。" },
+    description: "你成为评议3回合，该效果不可叠加，仅能刷新持续时间。每一回合你可指定1名玩家送出绿票/红票。若送出红票，该玩家的谱面配置水平提高10点，但连续2回合不可发动角色技能，同时你的声望-1。若送出绿票，该玩家声望+1，你的声望+2并抽取1张牌。累计给拥有热风小西八或大鸽子喵喵喵的玩家发放两次红票时，其自动获得一张【跟你爆了！！！】。" },
   { id: "commission", name: "约稿", rarity: "white", category: "skill", target: "self", glyph: "file-signature",
     description: "你的谱面成为约稿。你的谱面选曲点数变为场内所有选曲点数的平均数，你额外获得1张技能牌。但你的谱面点数在[剩余回合数*0.7]回合后锁定，不再发生任何变化。" },
   { id: "one-unchanged", name: "一成不变", rarity: "green", category: "skill", target: "self", glyph: "rotate-ccw", targetMode: "OWN_CHARACTER",
@@ -450,7 +461,7 @@ const SKILL_CARDS = Object.freeze([
     description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。自动选择一个可用角色。" },
   { id: "tune-event", name: "调所有人事件", rarity: "blue", category: "skill", target: "self", glyph: "sliders",
     description: "Out Elastic。所有玩家的某一同样（选曲品味除外）的谱面维度数值变为24。随机选择一个维度。" },
-  { id: "chaos", name: "混沌", rarity: "orange", category: "skill", target: "self", glyph: "shuffle",
+  { id: "chaos", name: "混沌", rarity: "purple", category: "skill", target: "self", glyph: "shuffle",
     description: "难道说……难道说！打出抽牌堆顶的3张牌。" },
   { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot",
     description: "抽3张牌，丢弃1张牌。" },
@@ -458,13 +469,25 @@ const SKILL_CARDS = Object.freeze([
   { id: "remap", name: "Remap", rarity: "green", category: "draw", target: "self", glyph: "repeat", targetMode: "NONE",
     description: "丢弃所有手牌，然后抽等于被丢弃的牌数量+1（数量计入打出的这张Remap）的牌。" },
   { id: "hasty-draft", name: "潦草急就", rarity: "purple", category: "draw", target: "self", glyph: "zap-off",
-    description: "失去2点配置水平、1点抽象动效水平与1点具象动效水平。抽5张牌。" }
+    description: "你的配置水平、抽象演出水平与具象演出水平各-3，抽5张牌。" },
+  { id: "beibei", name: "贝贝", rarity: "white", category: "growth", target: "self", glyph: "skip-forward",
+    description: "打出此牌后直接跳过本回合。由于节省了精力，你的创新程度+8。若此牌在【x x xxx】后一张打出，则获得“节目效果”，直到你的下一回合开始前，你的分数不会被减少。" },
+  { id: "dcc", name: "我提交了二十张DCC", rarity: "purple", category: "skill", target: "self", glyph: "file-text",
+    description: "你的声望+1。接下来的3轮内，其他玩家对你使用技能牌时需声望大于你。" },
+  { id: "kkp", name: "kkp", rarity: "purple", category: "attack", target: "opponent", glyph: "eye",
+    description: "叫一名玩家帮你看看谱，你的配置水平+4，该玩家跳过下一轮次内自己的回合，并且他的配置水平+2。" },
+  { id: "comment-off", name: "已关闭评论区", rarity: "blue", category: "skill", target: "self", glyph: "ban",
+    description: "你的声望-5。接下来的三个轮次内，其他玩家无法对你使用任何负面技能；你的所有谱面维度将被锁定，直至下一轮次内你自己的回合结束。" },
+  { id: "star-hit", name: "撞星", rarity: "blue", category: "growth", target: "self", glyph: "star",
+    description: "打出此牌后，你位置右方的所有手牌替换成【星】。根据替换手牌的卡色：每含一张橙色，具象+8且再摸一张撞星；每含一张紫色或蓝色，具象+8；每含一张绿色或白色，配置+5。若你的谱师牌包含Ftayo/238/恼鬼/子阳，此牌所有加分效果额外+4。" },
+  { id: "limen", name: "里门", rarity: "green", category: "skill", target: "self", glyph: "door-open",
+    description: "抽象动效水平与具象动效水平均+6。下一回合你进入静默状态：不可发动角色技能，仅可打出一张手牌，使此手牌对其他玩家的减分效果×3。若你的谱师牌包含子阳，减分效果×3改为×6。" }
 ]);
 
 const EVENT_CARDS = Object.freeze([
   {
     id: "meeting", name: "面基", glyph: "users",
-    description: "你的谱师们面基了！90%概率下，你的谱面所有维度+1；否则你的角色牌3回合无法发动技能。"
+    description: "你的谱师们面基了！90%概率下，你的谱面所有维度+1；否则你的角色牌1回合无法发动技能。"
   },
   {
     id: "recruit", name: "招安", glyph: "badge-check",
@@ -492,7 +515,7 @@ const EVENT_CARDS = Object.freeze([
   },
   {
     id: "maimai", name: "打舞萌", glyph: "disc-3",
-    description: "选择自己的1名角色和另一位玩家；对方必须选择1名角色拼机。双方配置水平+3，对方所选角色下一回合无法发动技能。"
+    description: "选择另一位玩家，对方必须选择一名角色与你拼机，不可拒绝。完成后，两名玩家的配置水平+3，对方的角色下一回合无法使用其技能。"
   },
   {
     id: "chunithm", name: "打中二", glyph: "piano",
@@ -507,8 +530,8 @@ const EVENT_CARDS = Object.freeze([
     description: "摸到后随机选择一名综合得分更高的玩家。若你至少有一个维度更高，你与对方最高分维度相同的维度+1；否则随机维度-1，且下一回合最多打出3张技能牌。没有更高分玩家时不产生效果。"
   },
   {
-    id: "rpe", name: "RPE崩了", glyph: "monitor-up",
-    description: "配置水平、抽象动效、具象动效中随机一项减半并向下取整；拥有PE谱师时无效。当前没有角色属于PE谱师。"
+    id: "rpe", name: "崩所有人RPE", glyph: "monitor-up",
+    description: "在场全部玩家的配置水平、抽象表演水平、具象表演水平中随机一项数值减半并向下取整（隐藏属性：若你的角色为PE谱师则无效）。"
   },
   {
     id: "clock-link", name: "时钟链接", glyph: "clock-3",
@@ -524,7 +547,7 @@ const EVENT_CARDS = Object.freeze([
   },
   {
     id: "computer-removed", name: "电脑被没收了", glyph: "monitor-off", isRare: true,
-    description: "【稀有牌】创新程度+5，并跳过你的下一回合。"
+    description: "【稀有牌】创新程度+5并跳过你的下一回合，下一回合结束时爆肝程度+2（拥有TPE谱师则无效果）。"
   },
   {
     id: "chart-missing", name: "谱面找不到了", glyph: "file-search", isRare: true,
