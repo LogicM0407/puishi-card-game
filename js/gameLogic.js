@@ -174,7 +174,7 @@ function skillCardPointMultiplier(player) {
 
 function applyScoreChange(playerIndex, dimension, requestedAmount, context = {}) {
   const player = game.players[playerIndex];
-  if (!player || !DIMENSIONS.includes(dimension) || !requestedAmount || player.frozen || player.commissionLocked) return 0;
+  if (!player || !DIMENSIONS.includes(dimension) || !requestedAmount || player.frozen || player.commissionLocked || player.dimensionLocked || (player.programEffect && requestedAmount < 0)) return 0;
   if (dimension === "selection" && player.firstRoundSkillUsed && !context.allowSelectionChange) return 0;
   if (game.effectDepth > 40) return 0;
 
@@ -182,6 +182,7 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
   if (context.fromSkillCard) {
     const source = game.players[context.sourcePlayerIndex ?? playerIndex];
     amount *= skillCardPointMultiplier(source);
+    if (amount < 0 && source && source.silencedAmplify) amount *= source.silencedAmplify;
   }
   if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
     amount = Math.floor(amount * .5);
@@ -495,11 +496,13 @@ function resolveEvent(playerIndex, card) {
   } else if (event.id === "computer-removed") {
     applyScoreChange(playerIndex, "innovation", 5, { sourcePlayerIndex: playerIndex });
     player.skipNextTurn = true;
-    appendLog(`${player.name} 触发「电脑被没收了」：创新程度+5，下一回合被跳过。`, "event");
+    player.computerRemovedBonus = true;
+    appendLog(`${player.name} 触发「电脑被没收了」：创新程度+5，下一回合被跳过，回合结束时爆肝程度+2。`, "event");
   } else if (event.id === "chart-missing") {
     const hasLowStamina = player.characters.some(instance => {
       const def = characterDefinition(instance.id);
-      return def && def.stats.stamina <= 5;
+      const stamina = def ? def.stats.stamina + (instance.staminaBonus || 0) : 0;
+      return def && stamina <= 5;
     });
     if (!hasLowStamina) {
       appendLog(`${player.name} 触发「谱面找不到了」，但爆肝程度未≤5，无效果。`, "event");
@@ -523,8 +526,12 @@ function resolvePendingEvent(memberId, payload = {}) {
   if (!actor) return fail("事件发起玩家不存在");
 
   if (pending.stage === "choose") {
-    const ownEntry = characterEntryByUid(payload.ownCharacterUid);
-    if (!ownEntry || ownEntry.playerIndex !== pending.actorIndex) return fail("请选择自己的角色牌");
+    const isMaimai = pending.eventId === "maimai";
+    let ownEntry = null;
+    if (!isMaimai) {
+      ownEntry = characterEntryByUid(payload.ownCharacterUid);
+      if (!ownEntry || ownEntry.playerIndex !== pending.actorIndex) return fail("请选择自己的角色牌");
+    }
     const targetPlayerIndex = game.players.findIndex(candidate =>
       candidate.memberId === payload.targetMemberId &&
       candidate.memberId !== actor.memberId
@@ -545,7 +552,7 @@ function resolvePendingEvent(memberId, payload = {}) {
       ...pending,
       stage: "response",
       responderMemberId: target.memberId,
-      ownCharacterUid: ownEntry.character.uid,
+      ownCharacterUid: ownEntry ? ownEntry.character.uid : null,
       targetPlayerIndex
     };
     appendLog(`${target.name} 需要响应「${eventDefinition(pending.eventId).name}」。`, "event");
@@ -698,6 +705,18 @@ function beginTurn() {
   player.counters.twoThreeEightLoss = 0;
   player.skillCardLimit = player.pendingSkillCardLimit;
   player.pendingSkillCardLimit = null;
+  if (player.negativeImmuneTurns > 0) player.negativeImmuneTurns--;
+  if (player.dccProtectionTurns > 0) player.dccProtectionTurns--;
+  player.dimensionLocked = false;
+  player.programEffect = false;
+  if (player.silencedNextTurn) {
+    player.silencedNextTurn = false;
+    player.silenced = true;
+    player.silencedAmplify = ownsCharacter(player, "ziyang") ? 6 : 3;
+  } else {
+    player.silenced = false;
+    player.silencedAmplify = 0;
+  }
   if (player.commissionLockAtRound != null && game.round >= player.commissionLockAtRound) {
     player.commissionLocked = true;
   }
@@ -793,7 +812,12 @@ function isAllSkillBlocked(player) {
   return player.disableAllSkillTurns > 0 || player.disableUntilOwnTurn;
 }
 
+function isNegativeSkillCard(definition) {
+  return Boolean(definition && definition.category === "attack" && definition.id !== "kkp");
+}
+
 function canActivateCharacter(player, instance, ability) {
+  if (player.silenced) return fail("静默状态不可发动角色技能");
   if (instance.permanentlyDisabled) return fail("该角色技能已永久失效");
   const useKey = `${instance.uid}:${ability.id}`;
   if (game.turn.usedAbilityIds.includes(useKey)) return fail("该技能本回合已经发动过");
@@ -1016,6 +1040,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   if (!ownTurn) return fail("该牌只能在自己的回合打出");
   if (game.round === 1) return fail("第1轮不能使用技能牌");
   if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
+  if (player.silenced && game.turn.skillCardsPlayed >= 1) return fail("静默状态仅能打出一张手牌");
   if (player.skillCardLimit != null && game.turn.skillCardsPlayed >= player.skillCardLimit) {
     return fail(`本回合最多打出${player.skillCardLimit}张技能牌`);
   }
@@ -1036,6 +1061,15 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     if (!target) return fail("目标不存在");
     if (target.memberId === player.memberId) return fail("必须选择其他玩家");
     targetIdx = game.players.findIndex(candidate => candidate.memberId === target.memberId);
+  }
+
+  if (target) {
+    if (target.negativeImmuneTurns > 0 && isNegativeSkillCard(definition)) {
+      return fail("对方已关闭评论区，无法被负面技能影响");
+    }
+    if (target.dccProtectionTurns > 0 && player.reputation <= target.reputation) {
+      return fail("对方声望需要低于你");
+    }
   }
 
   if (definition.id === "review") {
@@ -1344,7 +1378,14 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     appendLog(`${player.name} 打出「潦草急就」：配置/抽象/具象各-3，抽5张牌。`, "effect");
   } else if (definition.id === "beibei") {
     applyScoreChange(playerIndex, "innovation", 8 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「贝贝」：创新程度+8。`, "effect");
+    if (game.turn.lastSkillCardId === "x-xxx") {
+      player.programEffect = true;
+      appendLog(`${player.name} 打出「贝贝」：创新程度+8，并触发节目效果（下一回合开始前分数不会被减少）。`, "effect");
+    } else {
+      appendLog(`${player.name} 打出「贝贝」：创新程度+8。`, "effect");
+    }
+    game.turn.hasDrawn = true;
+    player.beibeiSkipTurn = true;
   } else if (definition.id === "dcc") {
     gainReputation(playerIndex, 1);
     player.dccProtectionTurns = 3;
@@ -1382,6 +1423,11 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   if (definition.id !== "remap") {
     appendLog(`${player.name} 打出「${definition.name}」。`, "effect");
     if (!consumePlayedSkillCard(playerIndex, cardUid)) return fail("卡牌消耗失败");
+  }
+  game.turn.lastSkillCardId = definition.id;
+  if (player.beibeiSkipTurn) {
+    player.beibeiSkipTurn = false;
+    endTurn(playerIndex);
   }
   if (game.turn.skillCardsPlayed === 3 && ownsCharacter(player, "ziwei")) {
     drawCards(playerIndex, 1);
@@ -1493,8 +1539,16 @@ function endTurn(playerIndex) {
   }
   // 跳过下一回合（如「电脑被没收了」事件）
   if (currentPlayer().skipNextTurn) {
-    currentPlayer().skipNextTurn = false;
-    appendLog(`${currentPlayer().name} 的回合被跳过。`, "event");
+    const skipped = currentPlayer();
+    skipped.skipNextTurn = false;
+    if (skipped.computerRemovedBonus) {
+      skipped.computerRemovedBonus = false;
+      skipped.characters.forEach(character => {
+        character.staminaBonus = (character.staminaBonus || 0) + 2;
+      });
+      appendLog(`${skipped.name} 的爆肝程度+2。`, "effect");
+    }
+    appendLog(`${skipped.name} 的回合被跳过。`, "event");
     return endTurn(game.currentPlayerIndex);
   }
   beginTurn();
@@ -1674,7 +1728,7 @@ function resolveBotEvent(playerIndex) {
   if (pending.stage === "choose") {
     const targetIndex = botTargetIndex(playerIndex);
     result = hostDispatch(player.memberId, "RESOLVE_EVENT", {
-      ownCharacterUid: randomItem(player.characters)?.uid,
+      ownCharacterUid: pending.eventId === "maimai" ? null : randomItem(player.characters)?.uid,
       targetMemberId: game.players[targetIndex]?.memberId
     }, "", true);
   } else {

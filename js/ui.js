@@ -36,10 +36,14 @@ function render() {
     const event = eventDefinition(pending.eventId);
     if (pending.stage === "choose") {
       const me = myGamePlayer();
+      const isMaimai = pending.eventId === "maimai";
       ui.modal = {
         kind: "event-choose",
         title: `事件：${event.name}`,
-        description: event.description + "（请选择自己的1名角色和另一位玩家。注：技能被禁用的角色也可参与拼机）",
+        description: isMaimai
+          ? event.description + "（请选择另一位玩家。）"
+          : event.description + "（请选择自己的1名角色和另一位玩家。注：技能被禁用的角色也可参与拼机）",
+        requiresOwnCharacter: !isMaimai,
         ownCharacters: me?.characters || [],
         targets: game.players.filter(p => p.memberId !== me?.memberId),
         selectedCharacterUid: null,
@@ -715,23 +719,24 @@ function renderActionModal() {
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   } else if (modal.kind === "event-choose") {
-    const characterButtons = modal.ownCharacters.length
-      ? modal.ownCharacters.map(instance => {
-          const def = characterDefinition(instance.id);
-          const selected = modal.selectedCharacterUid === instance.uid;
-          const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
-          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
-        }).join("")
-      : '<div class="empty">没有可用的角色牌。</div>';
+    const characterButtons = modal.requiresOwnCharacter === false
+      ? ""
+      : (modal.ownCharacters.length
+        ? modal.ownCharacters.map(instance => {
+            const def = characterDefinition(instance.id);
+            const selected = modal.selectedCharacterUid === instance.uid;
+            const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
+            return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+          }).join("")
+        : '<div class="empty">没有可用的角色牌。</div>');
     const targetButtons = modal.targets.map(target => {
       const selected = modal.selectedTargetMemberId === target.memberId;
       return `<button class="target-btn ${selected ? "selected" : ""}" data-event-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
     }).join("");
-    const canConfirm = modal.selectedCharacterUid && modal.selectedTargetMemberId;
+    const canConfirm = (modal.requiresOwnCharacter === false ? true : modal.selectedCharacterUid) && modal.selectedTargetMemberId;
     choices = `
-      <div class="event-step"><div class="event-step-title">① 选择自己的角色</div>
-      <div class="target-list">${characterButtons}</div></div>
-      <div class="event-step"><div class="event-step-title">② 选择目标玩家</div>
+      ${modal.requiresOwnCharacter === false ? "" : `<div class="event-step"><div class="event-step-title">① 选择自己的角色</div><div class="target-list">${characterButtons}</div></div>`}
+      <div class="event-step"><div class="event-step-title">${modal.requiresOwnCharacter === false ? "选择目标玩家" : "② 选择目标玩家"}</div>
       <div class="target-list">${targetButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "event-response") {
