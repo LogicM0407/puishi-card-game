@@ -445,6 +445,15 @@ function renderPlayerStatuses(me, ownTurn) {
 }
 
 function renderSkillCard(card, me, ownTurn) {
+  if (card.type === "star") {
+    return `<article class="game-card skill rarity-white star-card">
+      <div class="card-top"><span class="card-kind">特殊</span><span class="rarity rarity-white">星</span></div>
+      <div class="card-glyph">${icon("star", 28)}</div>
+      <div class="card-name">星</div>
+      <div class="card-desc">无法打出，不计入手牌上限。受到减分时自动弃置，每8点具象动效抵消1点减分。</div>
+      <div class="card-meta">特殊牌</div>
+    </article>`;
+  }
   const definition = skillDefinition(card.cardId);
   const managed = me && !me.isBot && me.aiControlled;
   const canUse = ownTurn && game.round > 1 && !ui.pendingRequest && !isAllSkillBlocked(me) && !managed;

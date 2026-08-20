@@ -62,6 +62,26 @@ function createCard(type, cardId) {
   return { type, cardId, uid: `${type === "skill" ? "s" : "e"}_${cryptoRandom(8)}` };
 }
 
+function createStarCard() {
+  return { type: "star", cardId: "star", uid: `star_${cryptoRandom(8)}` };
+}
+
+function mitigateWithStars(player, amount) {
+  if (!player || amount >= 0) return amount;
+  const perStar = Math.floor((player.scores.concrete || 0) / 8);
+  if (perStar <= 0) return amount;
+  let reduction = Math.abs(amount);
+  while (reduction > 0) {
+    const starIdx = player.hand.findIndex(c => c.type === "star");
+    if (starIdx < 0) break;
+    player.hand.splice(starIdx, 1);
+    reduction -= perStar;
+    appendLog(`${player.name} 弃置一张【星】以抵消减分。`, "effect");
+  }
+  player.handCount = player.hand.length;
+  return reduction <= 0 ? 0 : -reduction;
+}
+
 function createGameState(members, totalRounds) {
   const activeMembers = members.filter(member => !member.spectator && member.connected);
   const orderedMembers = shuffle([...activeMembers]);
@@ -141,8 +161,10 @@ function createGameState(members, totalRounds) {
 
 function refillDeckIfNeeded() {
   if (game.deck.length || !game.discard.length) return;
-  game.deck = shuffle(game.discard.splice(0));
-  appendLog("抽牌堆已空，弃牌堆重新洗入抽牌堆。", "event");
+  const regular = game.discard.filter(c => c.type !== "star");
+  game.discard = [];
+  game.deck = shuffle(regular);
+  appendLog("抽牌堆已空，弃牌堆重新洗入抽牌堆（星不进入牌堆）。", "event");
 }
 
 function ownsCharacter(player, characterId) {
@@ -193,6 +215,7 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     appendLog(`${player.name} 的配置水平减少被“地道东京爷”免疫。`, "effect");
     return 0;
   }
+  if (amount < 0) amount = mitigateWithStars(player, amount);
   if (!amount) return 0;
 
   const beforeAll = game.players.map(candidate => candidate.scores[dimension]);
@@ -1401,18 +1424,31 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     player.dimensionLocked = true;
     appendLog(`${player.name} 打出「已关闭评论区」：声望-5，3轮内免疫负面技能，维度锁定至下一回合。`, "effect");
   } else if (definition.id === "star-hit") {
-    const handColors = player.hand.filter(c => c.uid !== cardUid).map(c => skillDefinition(c.cardId)?.rarity);
-    let concreteBonus = 0, configBonus = 0;
-    for (const r of handColors) {
-      if (r === "orange") concreteBonus += 8;
+    const idx = player.hand.findIndex(c => c.uid === cardUid);
+    const rightCards = idx >= 0 ? player.hand.slice(idx + 1) : [];
+    let concreteBonus = 0, configBonus = 0, orangeCount = 0;
+    rightCards.forEach(c => {
+      const r = skillDefinition(c.cardId)?.rarity;
+      if (r === "orange") { concreteBonus += 8; orangeCount++; }
       else if (r === "purple" || r === "blue") concreteBonus += 8;
       else if (r === "green" || r === "white") configBonus += 5;
-    }
+    });
     const hasSpecial = ["ftayo", "two-three-eight", "naogui", "ziyang"].some(id => ownsCharacter(player, id));
-    const bonus = hasSpecial ? 4 : 0;
-    if (concreteBonus + bonus > 0) applyScoreChange(playerIndex, "concrete", concreteBonus + bonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    if (configBonus + bonus > 0) applyScoreChange(playerIndex, "config", configBonus + bonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「撞星」：根据手牌卡色获得配置/具象加成。`, "effect");
+    if (hasSpecial) {
+      if (concreteBonus > 0) concreteBonus += 4;
+      if (configBonus > 0) configBonus += 4;
+    }
+    // 将撞星右方的所有手牌替换成【星】
+    const starCards = rightCards.map(() => createStarCard());
+    player.hand.splice(idx + 1, rightCards.length, ...starCards);
+    // 每包含一张橙色，额外摸一张【撞星】
+    for (let i = 0; i < orangeCount; i++) {
+      player.hand.push(createCard("skill", "star-hit"));
+    }
+    player.handCount = player.hand.length;
+    if (concreteBonus > 0) applyScoreChange(playerIndex, "concrete", concreteBonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    if (configBonus > 0) applyScoreChange(playerIndex, "config", configBonus, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    appendLog(`${player.name} 打出「撞星」：右方${rightCards.length}张牌替换成【星】，具象+${concreteBonus}、配置+${configBonus}${orangeCount ? `，额外摸${orangeCount}张撞星` : ""}。`, "effect");
   } else if (definition.id === "limen") {
     applyScoreChange(playerIndex, "abstract", 6 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     applyScoreChange(playerIndex, "concrete", 6 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
@@ -1872,6 +1908,7 @@ function performBotAction() {
         (priorityMap[a.cardId] ?? 999) - (priorityMap[b.cardId] ?? 999)
       );
       for (const card of sortedHand) {
+        if (card.type === "star") continue;
         const payload = { cardUid: card.uid };
         const def = skillDefinition(card.cardId);
         if (def?.targetMode === TARGET_MODE.PLAYER || def?.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
