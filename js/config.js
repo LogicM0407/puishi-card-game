@@ -1,7 +1,15 @@
 "use strict";
 
-const VERSION = "v2.2.0";
+const VERSION = "v2.2.1";
 const CHANGELOG = Object.freeze([
+  { version: "v2.2.1", items: [
+    "修复：我就不写谱、杂技改为弹出选择框（分别选择角色/弃置牌），不再随机",
+    "修复：柳橙汁3743技能改为两步选择（先选玩家再选白/绿技能牌），不再随机抽取",
+    "修复：我是脚健我很脚健技能完全无效果——补全实现（弃置至多3张技能牌并抽等量）",
+    "修复：子阳技能完全无效果——补全实现（每2点创新获得1点抽象+1点具象）并实现具象提升翻倍被动",
+    "修复：吃马虎旧被动仍生效——移除配置减半与配置+8旧被动，改为其他玩家回合内维度被改变时声望+1",
+    "修复：机器人卡住——补充星抵消挂起时机器人的调度，避免未决状态卡死"
+  ]},
   { version: "v2.2.0", items: [
     "内容更新：按实装内容变更清单调整29项技能牌，新增6张技能牌（贝贝、我提交了二十张DCC、kkp、已关闭评论区、撞星、里门）",
     "内容更新：调整5项事件牌（面基、打舞萌、崩所有人RPE、电脑被没收了、谱面找不到了）",
@@ -331,7 +339,7 @@ const CHARACTERS = Object.freeze([
     stats: { config: 12, abstract: 3, concrete: 3, innovation: 3, selection: 7, stamina: 5 },
     lore: "若有人三分似你，我便心颤魂惊。元老级别的谱师，早期自制圈塞爆的代名词，隐退后他的名字仍然响彻各个群聊，一提到挨踢十七，脑海中便不自觉地浮现他的冰西瓜。",
     abilities: [{
-      id: "jiaojian-main", cooldown: 1,
+      id: "jiaojian-main", cooldown: 1, choice: "discard-cards",
       description: "弃置至多3张技能牌并抽等量的牌。"
     }],
     passive: "直至你的第四个回合结束，配置水平不会被减少且受到的增加效果翻倍。"
@@ -341,7 +349,7 @@ const CHARACTERS = Object.freeze([
     stats: { config: 1, abstract: 1, concrete: 1, innovation: 2, selection: 1, stamina: 16 },
     lore: "这个也是谱师吗",
     abilities: [{
-      id: "liuzhizhi-main", cooldown: 2, choice: "opponent",
+      id: "liuzhizhi-main", cooldown: 2, choice: "opponent-card",
       description: "每2回合查看一名其他玩家的所有技能牌，从中选择一张白色/绿色技能牌变成自己的牌然后将其打出。"
     }],
     passive: "版权警告！声望增加时，使随机一名其他玩家谱面的随机一个维度分数-2。"
@@ -366,7 +374,9 @@ const TARGET_MODE = Object.freeze({
   OWN_CHARACTER: "OWN_CHARACTER",
   OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS",
   ANY_CHARACTER: "ANY_CHARACTER",
-  OWN_CHARACTER_AND_DIMENSION: "OWN_CHARACTER_AND_DIMENSION"
+  OWN_CHARACTER_AND_DIMENSION: "OWN_CHARACTER_AND_DIMENSION",
+  OWN_AVAILABLE_CHARACTER: "OWN_AVAILABLE_CHARACTER",
+  SELF_CARD: "SELF_CARD"
 });
 
 const SKILL_CARDS = Object.freeze([
@@ -465,13 +475,13 @@ const SKILL_CARDS = Object.freeze([
     description: "你的谱面成为约稿。你的谱面选曲点数变为场内所有选曲点数的平均数，你额外获得1张技能牌。但你的谱面点数在[剩余回合数*0.7]回合后锁定，不再发生任何变化。" },
   { id: "one-unchanged", name: "一成不变", rarity: "green", category: "skill", target: "self", glyph: "rotate-ccw", targetMode: "OWN_CHARACTER",
     description: "选择一个角色卡，将其技能切换为可用状态（不包括永久禁用角色）。" },
-  { id: "refuse-chart", name: "我就不写谱", rarity: "green", category: "skill", target: "self", glyph: "ban",
-    description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。自动选择一个可用角色。" },
+  { id: "refuse-chart", name: "我就不写谱", rarity: "green", category: "skill", target: "self", glyph: "ban", targetMode: "OWN_AVAILABLE_CHARACTER",
+    description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。" },
   { id: "tune-event", name: "调所有人事件", rarity: "blue", category: "skill", target: "self", glyph: "sliders",
     description: "Out Elastic。所有玩家的某一同样（选曲品味除外）的谱面维度数值变为24。随机选择一个维度。" },
   { id: "chaos", name: "混沌", rarity: "purple", category: "skill", target: "self", glyph: "shuffle",
     description: "难道说……难道说！打出抽牌堆顶的3张牌。" },
-  { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot",
+  { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot", targetMode: "SELF_CARD",
     description: "抽3张牌，丢弃1张牌。" },
   // ===== 抽牌（Draw）=====
   { id: "remap", name: "Remap", rarity: "green", category: "draw", target: "self", glyph: "repeat", targetMode: "NONE",

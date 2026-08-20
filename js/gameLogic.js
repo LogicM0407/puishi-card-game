@@ -229,8 +229,8 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     amount *= skillCardPointMultiplier(source);
     if (amount < 0 && source && source.silencedAmplify) amount *= source.silencedAmplify;
   }
-  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
-    amount = Math.floor(amount * .5);
+  if (amount > 0 && dimension === "concrete" && ownsCharacter(player, "ziyang")) {
+    amount *= 2;
   }
   if (amount < 0 && dimension === "config" && ownsCharacter(player, "tokyo")) {
     const source = game.players[context.sourcePlayerIndex];
@@ -311,16 +311,10 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
     }
   }
 
-  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
-    player.counters.chiMahuConfig += amount;
-    while (player.counters.chiMahuConfig >= 8) {
-      player.counters.chiMahuConfig -= 8;
-      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 5, {
-        sourcePlayerIndex: playerIndex,
-        skipCrossing: true
-      }));
-      appendLog(`${player.name} 累计提升8点配置能力，所有维度+5。`, "effect");
-    }
+  if (ownsCharacter(player, "chi-mahu") && sourceIndex !== playerIndex && player.counters.chiMahuRepTurn !== game.turn.number) {
+    player.counters.chiMahuRepTurn = game.turn.number;
+    gainReputation(playerIndex, 1);
+    appendLog(`${player.name} 的维度被其他玩家改变，获得1点声望。`, "effect");
   }
 
   if (amount > 0 && dimension === "config" && ownsCharacter(player, "hotwind")) {
@@ -901,9 +895,17 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     const abstractPoints = Number(payload.abstractPoints);
     if (!Number.isInteger(abstractPoints) || abstractPoints < 0 || abstractPoints > 10) return fail("请分配10个动效点数");
   }
-  if (ability.choice === "opponent") {
+  if (ability.choice === "opponent" || ability.choice === "opponent-card") {
     const target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
     if (!target || target.memberId === player.memberId) return fail("请选择1名其他玩家");
+  }
+  if (ability.choice === "opponent-card") {
+    if (!payload.targetCardUid) return fail("请选择一张要获得的卡牌");
+  }
+  if (ability.choice === "discard-cards") {
+    const uids = Array.isArray(payload.discardUids) ? [...new Set(payload.discardUids)] : [];
+    if (!uids.length || uids.length > 3) return fail("请选择1~3张要弃置的牌");
+    if (uids.some(uid => !player.hand.some(c => c.uid === uid && c.type !== "star"))) return fail("只能弃置手中的技能牌");
   }
 
   if (game.round === 1) {
@@ -1062,6 +1064,26 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     } else {
       appendLog(`${player.name} 发动柳橙汁3743技能：从${targetPlayer.name}处获得并打出了「${skillDefinition(selectedCard.cardId).name}」。`, "effect");
     }
+  } else if (ability.id === "jiaojian-main") {
+    const uids = [...new Set(payload.discardUids || [])].slice(0, 3);
+    let discarded = 0;
+    uids.forEach(uid => {
+      const idx = player.hand.findIndex(c => c.uid === uid && c.type !== "star");
+      if (idx >= 0) {
+        const [removed] = player.hand.splice(idx, 1);
+        game.discard.push(removed);
+        discarded++;
+      }
+    });
+    drawCards(playerIndex, discarded);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 发动「我是脚健我很脚健」：弃置${discarded}张技能牌，抽${discarded}张牌。`, "effect");
+  } else if (ability.id === "ziyang-main") {
+    const points = Math.floor(player.scores.innovation / 2);
+    if (points <= 0) return fail("创新能力不足2点");
+    applyScoreChange(playerIndex, "abstract", points, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, "concrete", points, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动「子阳」技能：每2点创新获得1点抽象、1点具象（具象提升翻倍）。`, "effect");
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
@@ -1391,9 +1413,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     Object.keys(target_char.cooldowns || {}).forEach(k => target_char.cooldowns[k] = 0);
     appendLog(`${player.name} 打出「一成不变」：${characterDefinition(target_char.id).name}技能恢复可用。`, "effect");
   } else if (definition.id === "refuse-chart") {
-    const candidates = player.characters.filter(c => !c.permanentlyDisabled && c.disabledTurns === 0);
-    if (!candidates.length) return fail("没有可用技能的角色");
-    const target_char = randomItem(candidates);
+    const target_char = player.characters.find(c => c.uid === payload.characterUid && !c.permanentlyDisabled && c.disabledTurns === 0);
+    if (!target_char) return fail("请选择一名技能可用的角色");
     const def = characterDefinition(target_char.id);
     def.abilities.forEach(a => { target_char.cooldowns[a.id] = a.cooldown; });
     drawCards(playerIndex, 2);
@@ -1406,15 +1427,19 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     drawCards(playerIndex, 3);
     appendLog(`${player.name} 打出「混沌」：从牌堆顶抽3张牌。`, "effect");
   } else if (definition.id === "acrobatics") {
-    drawCards(playerIndex, 3);
-    const others = player.hand.filter(c => c.uid !== cardUid);
-    if (others.length) {
-      const toRemove = randomItem(others);
+    const discardUid = payload.discardUid;
+    let discardedName = "";
+    if (discardUid) {
+      const toRemove = player.hand.find(c => c.uid === discardUid);
+      if (!toRemove) return fail("要弃置的牌不存在");
       const removeIdx = player.hand.indexOf(toRemove);
       player.hand.splice(removeIdx, 1);
       game.discard.push(toRemove);
+      discardedName = skillDefinition(toRemove.cardId)?.name || "牌";
     }
-    appendLog(`${player.name} 打出「杂技」：抽3弃1。`, "effect");
+    drawCards(playerIndex, 3);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 打出「杂技」：${discardedName ? `弃置「${discardedName}」并` : ""}抽3张牌。`, "effect");
   } else if (definition.id === "remap") {
     const handSize = player.hand.length;
     player.hand.forEach(c => game.discard.push(c));
@@ -1761,6 +1786,22 @@ function botAbilityPayload(playerIndex, instance, ability) {
     const targetIndex = botTargetIndex(playerIndex);
     return { targetMemberId: game.players[targetIndex]?.memberId };
   }
+  if (ability.choice === "opponent-card") {
+    const targetIndex = botTargetIndex(playerIndex);
+    const targetPlayer = game.players[targetIndex];
+    const whiteGreen = (targetPlayer?.hand || []).filter(c => {
+      const def = skillDefinition(c.cardId);
+      return def && (def.rarity === "white" || def.rarity === "green");
+    });
+    if (!whiteGreen.length) return {};
+    return { targetMemberId: targetPlayer.memberId, targetCardUid: randomItem(whiteGreen).uid };
+  }
+  if (ability.choice === "discard-cards") {
+    const skillCards = player.hand.filter(c => c.type !== "star");
+    if (!skillCards.length) return {};
+    const count = Math.min(3, skillCards.length);
+    return { discardUids: shuffle(skillCards).slice(0, count).map(c => c.uid) };
+  }
   return {};
 }
 
@@ -1987,6 +2028,13 @@ function performBotAction() {
           if (!ownChar) continue;
           payload.characterUid = ownChar.uid;
           payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+        } else if (def?.targetMode === TARGET_MODE.OWN_AVAILABLE_CHARACTER) {
+          const targetChar = player.characters.find(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+          if (!targetChar) continue;
+          payload.characterUid = targetChar.uid;
+        } else if (def?.targetMode === TARGET_MODE.SELF_CARD) {
+          const other = player.hand.find(c => c.uid !== card.uid && c.type !== "star");
+          if (other) payload.discardUid = other.uid;
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }
@@ -2023,7 +2071,9 @@ function scheduleBotAction() {
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
   const pendingResponder = game.pendingEvent
     ? game.players.find(player => player.memberId === game.pendingEvent.responderMemberId)
-    : null;
+    : (game.pendingStarMitigation
+      ? game.players.find(player => player.memberId === game.pendingStarMitigation.memberId)
+      : null);
   const actor = pendingResponder || currentPlayer();
   if (!isAIActor(actor)) return;
   const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;

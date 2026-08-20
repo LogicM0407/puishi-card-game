@@ -692,8 +692,16 @@
 <script>
 "use strict";
 
-const VERSION = "v2.2.0";
+const VERSION = "v2.2.1";
 const CHANGELOG = Object.freeze([
+  { version: "v2.2.1", items: [
+    "修复：我就不写谱、杂技改为弹出选择框（分别选择角色/弃置牌），不再随机",
+    "修复：柳橙汁3743技能改为两步选择（先选玩家再选白/绿技能牌），不再随机抽取",
+    "修复：我是脚健我很脚健技能完全无效果——补全实现（弃置至多3张技能牌并抽等量）",
+    "修复：子阳技能完全无效果——补全实现（每2点创新获得1点抽象+1点具象）并实现具象提升翻倍被动",
+    "修复：吃马虎旧被动仍生效——移除配置减半与配置+8旧被动，改为其他玩家回合内维度被改变时声望+1",
+    "修复：机器人卡住——补充星抵消挂起时机器人的调度，避免未决状态卡死"
+  ]},
   { version: "v2.2.0", items: [
     "内容更新：按实装内容变更清单调整29项技能牌，新增6张技能牌（贝贝、我提交了二十张DCC、kkp、已关闭评论区、撞星、里门）",
     "内容更新：调整5项事件牌（面基、打舞萌、崩所有人RPE、电脑被没收了、谱面找不到了）",
@@ -1023,7 +1031,7 @@ const CHARACTERS = Object.freeze([
     stats: { config: 12, abstract: 3, concrete: 3, innovation: 3, selection: 7, stamina: 5 },
     lore: "若有人三分似你，我便心颤魂惊。元老级别的谱师，早期自制圈塞爆的代名词，隐退后他的名字仍然响彻各个群聊，一提到挨踢十七，脑海中便不自觉地浮现他的冰西瓜。",
     abilities: [{
-      id: "jiaojian-main", cooldown: 1,
+      id: "jiaojian-main", cooldown: 1, choice: "discard-cards",
       description: "弃置至多3张技能牌并抽等量的牌。"
     }],
     passive: "直至你的第四个回合结束，配置水平不会被减少且受到的增加效果翻倍。"
@@ -1033,7 +1041,7 @@ const CHARACTERS = Object.freeze([
     stats: { config: 1, abstract: 1, concrete: 1, innovation: 2, selection: 1, stamina: 16 },
     lore: "这个也是谱师吗",
     abilities: [{
-      id: "liuzhizhi-main", cooldown: 2, choice: "opponent",
+      id: "liuzhizhi-main", cooldown: 2, choice: "opponent-card",
       description: "每2回合查看一名其他玩家的所有技能牌，从中选择一张白色/绿色技能牌变成自己的牌然后将其打出。"
     }],
     passive: "版权警告！声望增加时，使随机一名其他玩家谱面的随机一个维度分数-2。"
@@ -1058,7 +1066,9 @@ const TARGET_MODE = Object.freeze({
   OWN_CHARACTER: "OWN_CHARACTER",
   OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS",
   ANY_CHARACTER: "ANY_CHARACTER",
-  OWN_CHARACTER_AND_DIMENSION: "OWN_CHARACTER_AND_DIMENSION"
+  OWN_CHARACTER_AND_DIMENSION: "OWN_CHARACTER_AND_DIMENSION",
+  OWN_AVAILABLE_CHARACTER: "OWN_AVAILABLE_CHARACTER",
+  SELF_CARD: "SELF_CARD"
 });
 
 const SKILL_CARDS = Object.freeze([
@@ -1157,13 +1167,13 @@ const SKILL_CARDS = Object.freeze([
     description: "你的谱面成为约稿。你的谱面选曲点数变为场内所有选曲点数的平均数，你额外获得1张技能牌。但你的谱面点数在[剩余回合数*0.7]回合后锁定，不再发生任何变化。" },
   { id: "one-unchanged", name: "一成不变", rarity: "green", category: "skill", target: "self", glyph: "rotate-ccw", targetMode: "OWN_CHARACTER",
     description: "选择一个角色卡，将其技能切换为可用状态（不包括永久禁用角色）。" },
-  { id: "refuse-chart", name: "我就不写谱", rarity: "green", category: "skill", target: "self", glyph: "ban",
-    description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。自动选择一个可用角色。" },
+  { id: "refuse-chart", name: "我就不写谱", rarity: "green", category: "skill", target: "self", glyph: "ban", targetMode: "OWN_AVAILABLE_CHARACTER",
+    description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。" },
   { id: "tune-event", name: "调所有人事件", rarity: "blue", category: "skill", target: "self", glyph: "sliders",
     description: "Out Elastic。所有玩家的某一同样（选曲品味除外）的谱面维度数值变为24。随机选择一个维度。" },
   { id: "chaos", name: "混沌", rarity: "purple", category: "skill", target: "self", glyph: "shuffle",
     description: "难道说……难道说！打出抽牌堆顶的3张牌。" },
-  { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot",
+  { id: "acrobatics", name: "杂技", rarity: "blue", category: "skill", target: "self", glyph: "circle-dot", targetMode: "SELF_CARD",
     description: "抽3张牌，丢弃1张牌。" },
   // ===== 抽牌（Draw）=====
   { id: "remap", name: "Remap", rarity: "green", category: "draw", target: "self", glyph: "repeat", targetMode: "NONE",
@@ -1562,8 +1572,8 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     amount *= skillCardPointMultiplier(source);
     if (amount < 0 && source && source.silencedAmplify) amount *= source.silencedAmplify;
   }
-  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
-    amount = Math.floor(amount * .5);
+  if (amount > 0 && dimension === "concrete" && ownsCharacter(player, "ziyang")) {
+    amount *= 2;
   }
   if (amount < 0 && dimension === "config" && ownsCharacter(player, "tokyo")) {
     const source = game.players[context.sourcePlayerIndex];
@@ -1644,16 +1654,10 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
     }
   }
 
-  if (amount > 0 && dimension === "config" && ownsCharacter(player, "chi-mahu")) {
-    player.counters.chiMahuConfig += amount;
-    while (player.counters.chiMahuConfig >= 8) {
-      player.counters.chiMahuConfig -= 8;
-      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 5, {
-        sourcePlayerIndex: playerIndex,
-        skipCrossing: true
-      }));
-      appendLog(`${player.name} 累计提升8点配置能力，所有维度+5。`, "effect");
-    }
+  if (ownsCharacter(player, "chi-mahu") && sourceIndex !== playerIndex && player.counters.chiMahuRepTurn !== game.turn.number) {
+    player.counters.chiMahuRepTurn = game.turn.number;
+    gainReputation(playerIndex, 1);
+    appendLog(`${player.name} 的维度被其他玩家改变，获得1点声望。`, "effect");
   }
 
   if (amount > 0 && dimension === "config" && ownsCharacter(player, "hotwind")) {
@@ -2234,9 +2238,17 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     const abstractPoints = Number(payload.abstractPoints);
     if (!Number.isInteger(abstractPoints) || abstractPoints < 0 || abstractPoints > 10) return fail("请分配10个动效点数");
   }
-  if (ability.choice === "opponent") {
+  if (ability.choice === "opponent" || ability.choice === "opponent-card") {
     const target = game.players.find(candidate => candidate.memberId === payload.targetMemberId);
     if (!target || target.memberId === player.memberId) return fail("请选择1名其他玩家");
+  }
+  if (ability.choice === "opponent-card") {
+    if (!payload.targetCardUid) return fail("请选择一张要获得的卡牌");
+  }
+  if (ability.choice === "discard-cards") {
+    const uids = Array.isArray(payload.discardUids) ? [...new Set(payload.discardUids)] : [];
+    if (!uids.length || uids.length > 3) return fail("请选择1~3张要弃置的牌");
+    if (uids.some(uid => !player.hand.some(c => c.uid === uid && c.type !== "star"))) return fail("只能弃置手中的技能牌");
   }
 
   if (game.round === 1) {
@@ -2395,6 +2407,26 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     } else {
       appendLog(`${player.name} 发动柳橙汁3743技能：从${targetPlayer.name}处获得并打出了「${skillDefinition(selectedCard.cardId).name}」。`, "effect");
     }
+  } else if (ability.id === "jiaojian-main") {
+    const uids = [...new Set(payload.discardUids || [])].slice(0, 3);
+    let discarded = 0;
+    uids.forEach(uid => {
+      const idx = player.hand.findIndex(c => c.uid === uid && c.type !== "star");
+      if (idx >= 0) {
+        const [removed] = player.hand.splice(idx, 1);
+        game.discard.push(removed);
+        discarded++;
+      }
+    });
+    drawCards(playerIndex, discarded);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 发动「我是脚健我很脚健」：弃置${discarded}张技能牌，抽${discarded}张牌。`, "effect");
+  } else if (ability.id === "ziyang-main") {
+    const points = Math.floor(player.scores.innovation / 2);
+    if (points <= 0) return fail("创新能力不足2点");
+    applyScoreChange(playerIndex, "abstract", points, { sourcePlayerIndex: playerIndex });
+    applyScoreChange(playerIndex, "concrete", points, { sourcePlayerIndex: playerIndex });
+    appendLog(`${player.name} 发动「子阳」技能：每2点创新获得1点抽象、1点具象（具象提升翻倍）。`, "effect");
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
@@ -2724,9 +2756,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     Object.keys(target_char.cooldowns || {}).forEach(k => target_char.cooldowns[k] = 0);
     appendLog(`${player.name} 打出「一成不变」：${characterDefinition(target_char.id).name}技能恢复可用。`, "effect");
   } else if (definition.id === "refuse-chart") {
-    const candidates = player.characters.filter(c => !c.permanentlyDisabled && c.disabledTurns === 0);
-    if (!candidates.length) return fail("没有可用技能的角色");
-    const target_char = randomItem(candidates);
+    const target_char = player.characters.find(c => c.uid === payload.characterUid && !c.permanentlyDisabled && c.disabledTurns === 0);
+    if (!target_char) return fail("请选择一名技能可用的角色");
     const def = characterDefinition(target_char.id);
     def.abilities.forEach(a => { target_char.cooldowns[a.id] = a.cooldown; });
     drawCards(playerIndex, 2);
@@ -2739,15 +2770,19 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     drawCards(playerIndex, 3);
     appendLog(`${player.name} 打出「混沌」：从牌堆顶抽3张牌。`, "effect");
   } else if (definition.id === "acrobatics") {
-    drawCards(playerIndex, 3);
-    const others = player.hand.filter(c => c.uid !== cardUid);
-    if (others.length) {
-      const toRemove = randomItem(others);
+    const discardUid = payload.discardUid;
+    let discardedName = "";
+    if (discardUid) {
+      const toRemove = player.hand.find(c => c.uid === discardUid);
+      if (!toRemove) return fail("要弃置的牌不存在");
       const removeIdx = player.hand.indexOf(toRemove);
       player.hand.splice(removeIdx, 1);
       game.discard.push(toRemove);
+      discardedName = skillDefinition(toRemove.cardId)?.name || "牌";
     }
-    appendLog(`${player.name} 打出「杂技」：抽3弃1。`, "effect");
+    drawCards(playerIndex, 3);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 打出「杂技」：${discardedName ? `弃置「${discardedName}」并` : ""}抽3张牌。`, "effect");
   } else if (definition.id === "remap") {
     const handSize = player.hand.length;
     player.hand.forEach(c => game.discard.push(c));
@@ -3094,6 +3129,22 @@ function botAbilityPayload(playerIndex, instance, ability) {
     const targetIndex = botTargetIndex(playerIndex);
     return { targetMemberId: game.players[targetIndex]?.memberId };
   }
+  if (ability.choice === "opponent-card") {
+    const targetIndex = botTargetIndex(playerIndex);
+    const targetPlayer = game.players[targetIndex];
+    const whiteGreen = (targetPlayer?.hand || []).filter(c => {
+      const def = skillDefinition(c.cardId);
+      return def && (def.rarity === "white" || def.rarity === "green");
+    });
+    if (!whiteGreen.length) return {};
+    return { targetMemberId: targetPlayer.memberId, targetCardUid: randomItem(whiteGreen).uid };
+  }
+  if (ability.choice === "discard-cards") {
+    const skillCards = player.hand.filter(c => c.type !== "star");
+    if (!skillCards.length) return {};
+    const count = Math.min(3, skillCards.length);
+    return { discardUids: shuffle(skillCards).slice(0, count).map(c => c.uid) };
+  }
   return {};
 }
 
@@ -3320,6 +3371,13 @@ function performBotAction() {
           if (!ownChar) continue;
           payload.characterUid = ownChar.uid;
           payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+        } else if (def?.targetMode === TARGET_MODE.OWN_AVAILABLE_CHARACTER) {
+          const targetChar = player.characters.find(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+          if (!targetChar) continue;
+          payload.characterUid = targetChar.uid;
+        } else if (def?.targetMode === TARGET_MODE.SELF_CARD) {
+          const other = player.hand.find(c => c.uid !== card.uid && c.type !== "star");
+          if (other) payload.discardUid = other.uid;
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }
@@ -3356,7 +3414,9 @@ function scheduleBotAction() {
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
   const pendingResponder = game.pendingEvent
     ? game.players.find(player => player.memberId === game.pendingEvent.responderMemberId)
-    : null;
+    : (game.pendingStarMitigation
+      ? game.players.find(player => player.memberId === game.pendingStarMitigation.memberId)
+      : null);
   const actor = pendingResponder || currentPlayer();
   if (!isAIActor(actor)) return;
   const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;
@@ -5091,6 +5151,18 @@ function openCardAction(cardUid) {
     ui.modal = { kind: "skill-own-character-dimension", cardUid, title: definition.name, description: definition.description, characters: ownCharacters, selectedCharacterUid: null, selectedDimension: null };
     return render();
   }
+  if (mode === TARGET_MODE.OWN_AVAILABLE_CHARACTER) {
+    const ownCharacters = me.characters.filter(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+    if (!ownCharacters.length) return showToast("没有技能可用的角色");
+    ui.modal = { kind: "skill-own-available-character", cardUid, title: definition.name, description: definition.description, characters: ownCharacters, selectedCharacterUid: null };
+    return render();
+  }
+  if (mode === TARGET_MODE.SELF_CARD) {
+    const cards = me.hand.filter(c => c.uid !== cardUid);
+    if (!cards.length) return sendGameAction("PLAY_CARD", { cardUid });
+    ui.modal = { kind: "skill-discard-one", cardUid, title: definition.name, description: definition.description, cards, selectedUid: null };
+    return render();
+  }
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
   const targets = game.players.filter(player => player.memberId !== me.memberId);
   ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
@@ -5127,6 +5199,31 @@ function openAbilityAction(characterId, abilityId) {
       title: definition.name,
       description: ability.description + costHint,
       targets: game.players.filter(player => player.memberId !== room.myId)
+    };
+  } else if (ability.choice === "opponent-card") {
+    ui.modal = {
+      kind: "ability-opponent-card",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      targets: game.players.filter(player => player.memberId !== room.myId),
+      selectedTarget: null,
+      cards: [],
+      selectedCardUid: null
+    };
+  } else if (ability.choice === "discard-cards") {
+    const me = myGamePlayer();
+    const cards = (me?.hand || []).filter(c => c.type !== "star");
+    if (!cards.length) return showToast("没有可弃置的技能牌");
+    ui.modal = {
+      kind: "ability-discard-cards",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      cards,
+      selectedUids: []
     };
   } else {
     return sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId });
@@ -5214,6 +5311,14 @@ function renderActionModal() {
     }).join("");
     choices = `<div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${charButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-own-available-character") {
+    const charButtons = modal.characters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedCharacterUid === instance.uid;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-own-available-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "可用"}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择要禁用的角色技能</div><div class="target-list">${charButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "skill-any-character") {
     const charButtons = modal.characters.map(instance => {
       const def = characterDefinition(instance.id);
@@ -5247,6 +5352,39 @@ function renderActionModal() {
     }).join("");
     choices = `<div class="event-step"><div class="event-step-title">选择要弃置的牌（每弃置1张，配置水平+3）</div><div class="target-list">${cardButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal">确定</button></div>`;
+  } else if (modal.kind === "skill-discard-one") {
+    const cardButtons = modal.cards.map(card => {
+      const def = skillDefinition(card.cardId);
+      const selected = modal.selectedUid === card.uid;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-discard-one="${card.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择1张要弃置的牌</div><div class="target-list">${cardButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedUid ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "ability-opponent-card") {
+    const targetButtons = modal.targets.map(target => {
+      const selected = modal.selectedTarget === target.memberId;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-liuzhizhi-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    const cardButtons = modal.cards.length
+      ? modal.cards.map(card => {
+          const def = skillDefinition(card.cardId);
+          const selected = modal.selectedCardUid === card.uid;
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-liuzhizhi-card="${card.uid}"><span>${escapeHtml(def.name)}（${def.rarity}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+        }).join("")
+      : '<div class="empty">该玩家没有白色/绿色技能牌</div>';
+    const canConfirm = modal.selectedTarget && modal.selectedCardUid;
+    choices = `<div class="event-step"><div class="event-step-title">① 选择目标玩家</div><div class="target-list">${targetButtons}</div></div>
+      <div class="event-step"><div class="event-step-title">② 选择一张白色/绿色技能牌</div><div class="target-list">${cardButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "ability-discard-cards") {
+    const cardButtons = modal.cards.map(card => {
+      const def = skillDefinition(card.cardId);
+      const selected = modal.selectedUids.includes(card.uid);
+      const canSelect = modal.selectedUids.length < 3 || selected;
+      return `<button class="target-btn ${selected ? "selected" : ""}" ${canSelect ? "" : "disabled"} data-ability-discard="${card.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择至多3张要弃置的技能牌</div><div class="target-list">${cardButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedUids.length ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   } else if (modal.kind === "event-choose") {
@@ -5367,6 +5505,38 @@ function renderActionModal() {
   document.querySelectorAll("[data-any-char]").forEach(button => {
     button.onclick = () => { modal.selectedCharacterUid = button.dataset.anyChar; render(); };
   });
+  document.querySelectorAll("[data-own-available-char]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.ownAvailableChar; render(); };
+  });
+  document.querySelectorAll("[data-discard-one]").forEach(button => {
+    button.onclick = () => { modal.selectedUid = button.dataset.discardOne; render(); };
+  });
+  document.querySelectorAll("[data-liuzhizhi-target]").forEach(button => {
+    button.onclick = () => {
+      modal.selectedTarget = button.dataset.liuzhizhiTarget;
+      modal.selectedCardUid = null;
+      const target = game.players.find(p => p.memberId === modal.selectedTarget);
+      modal.cards = (target?.hand || []).filter(c => {
+        const def = skillDefinition(c.cardId);
+        return def && (def.rarity === "white" || def.rarity === "green");
+      });
+      render();
+    };
+  });
+  document.querySelectorAll("[data-liuzhizhi-card]").forEach(button => {
+    button.onclick = () => { modal.selectedCardUid = button.dataset.liuzhizhiCard; render(); };
+  });
+  document.querySelectorAll("[data-ability-discard]").forEach(button => {
+    button.onclick = () => {
+      const uid = button.dataset.abilityDiscard;
+      if (modal.selectedUids.includes(uid)) {
+        modal.selectedUids = modal.selectedUids.filter(u => u !== uid);
+      } else if (modal.selectedUids.length < 3) {
+        modal.selectedUids.push(uid);
+      }
+      render();
+    };
+  });
   document.querySelectorAll("[data-effort-char]").forEach(button => {
     button.onclick = () => { modal.selectedCharacterUid = button.dataset.effortChar; modal.selectedDimension = null; render(); };
   });
@@ -5433,12 +5603,16 @@ function renderActionModal() {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, ownCharacterUid: modal.selectedOwnUid, targetCharacterUids: modal.selectedOpponentUids });
     } else if (modal.kind === "skill-own-character") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
+    } else if (modal.kind === "skill-own-available-character") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
     } else if (modal.kind === "skill-any-character") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
     } else if (modal.kind === "skill-own-character-dimension") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid, dimension: modal.selectedDimension });
     } else if (modal.kind === "skill-discard-cards") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, discardUids: modal.selectedUids });
+    } else if (modal.kind === "skill-discard-one") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, discardUid: modal.selectedUid });
     } else if (modal.kind === "event-choose") {
       sendGameAction("RESOLVE_EVENT", {
         ownCharacterUid: modal.selectedCharacterUid,
@@ -5461,6 +5635,19 @@ function renderActionModal() {
         characterId: modal.characterId,
         abilityId: modal.abilityId,
         targetMemberIds: modal.selected
+      });
+    } else if (modal.kind === "ability-opponent-card") {
+      sendGameAction("ACTIVATE_CHARACTER", {
+        characterId: modal.characterId,
+        abilityId: modal.abilityId,
+        targetMemberId: modal.selectedTarget,
+        targetCardUid: modal.selectedCardUid
+      });
+    } else if (modal.kind === "ability-discard-cards") {
+      sendGameAction("ACTIVATE_CHARACTER", {
+        characterId: modal.characterId,
+        abilityId: modal.abilityId,
+        discardUids: modal.selectedUids
       });
     }
   });
