@@ -346,7 +346,8 @@ const TARGET_MODE = Object.freeze({
   PLAYER_AND_DIMENSION: "PLAYER_AND_DIMENSION",
   OWN_DIMENSION: "OWN_DIMENSION",
   OWN_CHARACTER: "OWN_CHARACTER",
-  OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS"
+  OWN_AND_OPPONENT_CHARACTERS: "OWN_AND_OPPONENT_CHARACTERS",
+  ANY_CHARACTER: "ANY_CHARACTER"
 });
 
 const SKILL_CARDS = Object.freeze([
@@ -375,8 +376,8 @@ const SKILL_CARDS = Object.freeze([
     description: "你的创新程度+8，具象表演水平-3。若计算后你的抽象表演水平>具象表演水平，抽象表演水平+3。" },
   { id: "bumper-cars", name: "别样的碰碰车大战", rarity: "white", category: "growth", target: "opponent", glyph: "car",
     description: "选择一名谱师，你的选曲品味变为与其相同，但你的其他谱面维度-1。" },
-  { id: "co-chart", name: "写合作谱", rarity: "white", category: "growth", target: "opponent", glyph: "users",
-    description: "选择场上任意一个可发动技能的谱师，你的一项谱面维度+5，该项为你所指定的谱师的数值最高的谱面维度（选曲品味除外）。" },
+  { id: "co-chart", name: "写合作谱", rarity: "white", category: "growth", target: "self", glyph: "users", targetMode: "ANY_CHARACTER",
+    description: "选择场上任意一个可发动技能的角色，你的一项谱面维度+5，该项为你所指定的角色的数值最高的谱面维度（选曲品味除外）。选择过程类似「塔之诅咒」。" },
   { id: "observe", name: "观望", rarity: "white", category: "growth", target: "self", glyph: "eye",
     description: "你的选曲品味之外的谱面维度+1。" },
   { id: "start-chart", name: "开始写谱了", rarity: "white", category: "growth", target: "self", glyph: "pen-tool",
@@ -443,8 +444,8 @@ const SKILL_CARDS = Object.freeze([
     description: "你成为评议2回合。每一回合你可指定1名玩家送出绿票/红票。若送出红票，该玩家的谱面配置水平提高10点，但连续3回合不可发动技能。若送出绿票，该玩家可以在下回合额外摸1张牌。该效果不可叠加。" },
   { id: "commission", name: "约稿", rarity: "white", category: "skill", target: "self", glyph: "file-signature",
     description: "你的谱面成为约稿。你的谱面选曲点数变为场内所有选曲点数的平均数，你额外获得1张技能牌。但你的谱面点数在[剩余回合数*0.7]回合后锁定，不再发生任何变化。" },
-  { id: "one-unchanged", name: "一成不变", rarity: "green", category: "skill", target: "self", glyph: "rotate-ccw",
-    description: "选择一个角色卡，将其技能切换为可用状态（不包括永久禁用角色）。自动选择冷却最久的非永久禁用角色。" },
+  { id: "one-unchanged", name: "一成不变", rarity: "green", category: "skill", target: "self", glyph: "rotate-ccw", targetMode: "OWN_CHARACTER",
+    description: "选择一个角色卡，将其技能切换为可用状态（不包括永久禁用角色）。" },
   { id: "refuse-chart", name: "我就不写谱", rarity: "green", category: "skill", target: "self", glyph: "ban",
     description: "选择一个有可用的技能的角色卡，将其技能切换为不可用状态，抽2张牌。自动选择一个可用角色。" },
   { id: "tune-event", name: "调所有人事件", rarity: "blue", category: "skill", target: "self", glyph: "sliders",

@@ -538,6 +538,23 @@ function openCardAction(cardUid) {
     ui.modal = { kind: "skill-own-opponent-characters", cardUid, title: definition.name, description: definition.description, ownCharacters, opponentCharacters, selectedOwnUid: null, selectedOpponentUids: [] };
     return render();
   }
+  if (mode === TARGET_MODE.OWN_CHARACTER) {
+    const ownCharacters = me.characters.filter(c => !c.permanentlyDisabled && (c.disabledTurns > 0 || Object.values(c.cooldowns || {}).some(v => v > 0)));
+    if (!ownCharacters.length) return showToast("没有需要恢复的角色");
+    ui.modal = { kind: "skill-own-character", cardUid, title: definition.name, description: definition.description, characters: ownCharacters, selectedCharacterUid: null };
+    return render();
+  }
+  if (mode === TARGET_MODE.ANY_CHARACTER) {
+    const characters = [];
+    game.players.forEach(p => {
+      p.characters.forEach(c => {
+        if (!c.permanentlyDisabled) characters.push({ ...c, ownerName: p.name });
+      });
+    });
+    if (!characters.length) return showToast("场上没有可发动的角色");
+    ui.modal = { kind: "skill-any-character", cardUid, title: definition.name, description: definition.description, characters, selectedCharacterUid: null };
+    return render();
+  }
   if (definition.id === "finish-chart") {
     const discardable = me.hand.filter(item => item.uid !== cardUid);
     if (!discardable.length) return sendGameAction("PLAY_CARD", { cardUid });
@@ -653,6 +670,23 @@ function renderActionModal() {
     choices = `<div class="event-step"><div class="event-step-title">① 选择自己的1张角色卡</div><div class="target-list">${ownButtons}</div></div>
       <div class="event-step"><div class="event-step-title">② 选择其他玩家的2~3张角色卡</div><div class="target-list">${opponentButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${canConfirm ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-own-character") {
+    const charButtons = modal.characters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedCharacterUid === instance.uid;
+      const status = instance.disabledTurns > 0 ? `禁用${instance.disabledTurns}回合` : "冷却中";
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-own-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : status}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${charButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "skill-any-character") {
+    const charButtons = modal.characters.map(instance => {
+      const def = characterDefinition(instance.id);
+      const selected = modal.selectedCharacterUid === instance.uid;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-any-char="${instance.uid}"><span>${escapeHtml(def.name)}（${escapeHtml(instance.ownerName)}）</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择要参考的角色</div><div class="target-list">${charButtons}</div></div>
+      <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>确定</button></div>`;
   } else if (modal.kind === "skill-discard-cards") {
     const cardButtons = modal.cards.map(card => {
       const def = skillDefinition(card.cardId);
@@ -774,6 +808,12 @@ function renderActionModal() {
       render();
     };
   });
+  document.querySelectorAll("[data-own-char]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.ownChar; render(); };
+  });
+  document.querySelectorAll("[data-any-char]").forEach(button => {
+    button.onclick = () => { modal.selectedCharacterUid = button.dataset.anyChar; render(); };
+  });
   document.querySelectorAll("[data-motion-points]").forEach(button => {
     button.onclick = () => {
       ui.modal = null;
@@ -826,6 +866,10 @@ function renderActionModal() {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, targetMemberId: modal.selectedTarget, dimension: modal.selectedDimension });
     } else if (modal.kind === "skill-own-opponent-characters") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, ownCharacterUid: modal.selectedOwnUid, targetCharacterUids: modal.selectedOpponentUids });
+    } else if (modal.kind === "skill-own-character") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
+    } else if (modal.kind === "skill-any-character") {
+      sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, characterUid: modal.selectedCharacterUid });
     } else if (modal.kind === "skill-discard-cards") {
       sendGameAction("PLAY_CARD", { cardUid: modal.cardUid, discardUids: modal.selectedUids });
     } else if (modal.kind === "event-choose") {

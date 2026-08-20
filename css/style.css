@@ -1,4 +1,4 @@
-﻿  * { box-sizing: border-box; }
+  * { box-sizing: border-box; }
   :root {
     --bg: #101316;
     --surface: #171b1f;
@@ -671,5 +671,7 @@
   .chat-block-btn:hover { opacity: 1; }
   @media (max-width: 640px) {
     .chat-panel { width: 100%; max-height: 280px; border-radius: 0; }
+    .chat-panel.collapsed { left: 0; right: auto; width: auto; border-radius: 0 8px 0 0; }
+    .chat-panel.collapsed .chat-header { border-radius: 0 8px 0 0; }
   }
 </style>

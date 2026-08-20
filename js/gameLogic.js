@@ -39,10 +39,12 @@ function isSpectator() {
 function createDeck() {
   const connectedCount = roomPlayers().filter(member => member.connected).length;
   const events = EVENT_CARDS.filter(card => card.id !== "tribunal" || connectedCount >= 4);
-  // 稀有事件牌权重为普通事件牌的 1/5：普通事件 5 份，稀有事件 1 份
+  // 稀有事件牌权重为普通事件牌的 1/5：普通事件 5 份，稀有事件 1 份。
+  // 舞萌/中二/音击需要多步交互，概率过高会频繁打断流程，同样按 1 份处理。
+  const lowFrequencyEvents = new Set(["maimai", "chunithm", "ongeki"]);
   const eventCards = [];
   events.forEach(card => {
-    const copies = card.isRare ? 1 : 5;
+    const copies = card.isRare || lowFrequencyEvents.has(card.id) ? 1 : 5;
     for (let i = 0; i < copies; i++) eventCards.push(createCard("event", card.id));
   });
   // 牌堆构成：30%事件牌 + 70%技能牌
@@ -215,7 +217,7 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
     game.players.forEach((owner, ownerIndex) => {
       if (ownsCharacter(owner, "jinye") && owner.counters.jinyeDraws < 2) {
         owner.counters.jinyeDraws++;
-        drawCards(ownerIndex, 1);
+        drawCards(ownerIndex, 1, true);
         appendLog(`${owner.name} 因场上能力值降低抽1张牌。`, "effect");
       }
     });
@@ -237,12 +239,12 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
 
   if (amount > 0 && ownsCharacter(player, "naogui") && !player.counters.naoguiTriggered) {
     player.counters.naoguiTriggered = true;
-    drawCards(playerIndex, 1);
+    drawCards(playerIndex, 1, true);
     appendLog(`${player.name} 因能力值提升抽1张牌。`, "effect");
   }
 
   if (amount > 0 && dimension === "innovation" && ownsCharacter(player, "furry")) {
-    drawCards(playerIndex, 1);
+    drawCards(playerIndex, 1, true);
     appendLog(`${player.name} 因创新能力增加抽1张牌。`, "effect");
   }
 
@@ -250,7 +252,7 @@ function runScorePassives(playerIndex, dimension, amount, beforeAll, context) {
     player.counters.disinfectantGain += amount;
     while (player.counters.disinfectantGain >= 15) {
       player.counters.disinfectantGain -= 15;
-      drawCards(playerIndex, 2);
+      drawCards(playerIndex, 2, true);
       appendLog(`${player.name} 累计提升15点能力值，抽2张牌。`, "effect");
     }
   }
@@ -298,7 +300,7 @@ function runCrossingPassives(playerIndex, dimension, beforeAll) {
   game.players.forEach((ftayoOwner, ownerIndex) => {
     if (ownerIndex === playerIndex || !ownsCharacter(ftayoOwner, "ftayo")) return;
     if (beforeAll[playerIndex] <= beforeAll[ownerIndex] && afterValue > ftayoOwner.scores[dimension]) {
-      drawCards(ownerIndex, 1);
+      drawCards(ownerIndex, 1, true);
       appendLog(`${ftayoOwner.name} 的维度被对手超过，抽1张牌。`, "effect");
     }
   });
@@ -308,7 +310,7 @@ function runCrossingPassives(playerIndex, dimension, beforeAll) {
     const isHighest = game.players.every((candidate, index) => index === playerIndex || afterValue >= candidate.scores[dimension]);
     if (!wasHighest && isHighest) {
       player.counters.ziweiHighest[dimension] = true;
-      drawCards(playerIndex, 2);
+      drawCards(playerIndex, 2, true);
       const bonusDimension = randomDimension();
       applyScoreChange(playerIndex, bonusDimension, 8, { sourcePlayerIndex: playerIndex });
       appendLog(`${player.name} 的${DIMENSION_LABELS[dimension]}成为全场最高，抽2张牌且随机维度+8。`, "effect");
@@ -527,6 +529,16 @@ function resolvePendingEvent(memberId, payload = {}) {
     );
     const target = game.players[targetPlayerIndex];
     if (!target) return fail("请选择另一位玩家");
+    if (ownsCharacter(target, "cherry")) {
+      const points = pending.eventId === "maimai" ? 3 : pending.eventId === "chunithm" ? 5 : 6;
+      applyScoreChange(pending.actorIndex, "config", points, { sourcePlayerIndex: pending.actorIndex });
+      if (pending.eventId !== "maimai") {
+        applyScoreChange(pending.actorIndex, "concrete", points, { sourcePlayerIndex: pending.actorIndex });
+      }
+      appendLog(`${target.name} 的“樱桃喝酒人”免疫「${eventDefinition(pending.eventId).name}」，仅${actor.name}获得能力加成。`, "event");
+      game.pendingEvent = null;
+      return ok();
+    }
     game.pendingEvent = {
       ...pending,
       stage: "response",
@@ -1111,13 +1123,21 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
       applyScoreChange(playerIndex, "abstract", 3 * mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     }
   } else if (definition.id === "bumper-cars") {
-    setScore(playerIndex, "selection", target.scores.selection, { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
+    setScore(playerIndex, "selection", target.scores.selection, { sourcePlayerIndex: playerIndex, allowSelectionChange: true });
     CHANGEABLE_DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, -1, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
     appendLog(`${player.name} 打出「别样的碰碰车大战」：选曲品味变为与${target.name}相同，其他维度-1。`, "effect");
   } else if (definition.id === "co-chart") {
-    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => target.scores[d] > target.scores[best] ? d : best, "config");
+    let chosen = null;
+    let chosenOwnerName = "";
+    for (const p of game.players) {
+      const c = p.characters.find(ch => ch.uid === payload.characterUid);
+      if (c) { chosen = c; chosenOwnerName = p.name; break; }
+    }
+    if (!chosen) return fail("请选择要参考的角色");
+    const chosenDef = characterDefinition(chosen.id);
+    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => chosenDef.stats[d] > chosenDef.stats[best] ? d : best, "config");
     applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
-    appendLog(`${player.name} 打出「写合作谱」：参考${target.name}的${DIMENSION_LABELS[dim]}+5。`, "effect");
+    appendLog(`${player.name} 打出「写合作谱」：参考${chosenOwnerName}的${chosenDef.name}（${DIMENSION_LABELS[dim]}）+5。`, "effect");
   } else if (definition.id === "observe") {
     const mult = skillCardPointMultiplier(player);
     CHANGEABLE_DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, mult, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
@@ -1170,7 +1190,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   } else if (definition.id === "record") {
     applyScoreChange(playerIndex, "selection", 7 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, allowSelectionChange: true, fromSkillCard: true });
   } else if (definition.id === "unthread") {
-    setScore(playerIndex, "concrete", player.scores.abstract, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    setScore(playerIndex, "concrete", player.scores.abstract, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 打出「我拆线」：具象动效水平调整至与抽象动效水平一致。`, "effect");
   } else if (definition.id === "double-fall") {
     const mult = skillCardPointMultiplier(player);
@@ -1228,13 +1248,13 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     }
   } else if (definition.id === "bpm-bomb") {
     const avg = game.players.reduce((sum, p) => sum + p.scores.config, 0) / game.players.length;
-    setScore(targetIdx, "config", avg, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    setScore(targetIdx, "config", avg, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 对${target.name}打出「BPM轰炸」：配置水平调整为平均值${avg.toFixed(1)}。`, "effect");
   } else if (definition.id === "random-chart") {
     DIMENSIONS.forEach(dim => {
       const otherDims = DIMENSIONS.filter(d => d !== dim);
       const sourceDim = randomItem(otherDims);
-      setScore(targetIdx, dim, target.scores[sourceDim], { sourcePlayerIndex: playerIndex, allowSelectionChange: dim !== "selection", fromSkillCard: true });
+      setScore(targetIdx, dim, target.scores[sourceDim], { sourcePlayerIndex: playerIndex, allowSelectionChange: dim !== "selection" });
     });
     appendLog(`${player.name} 对${target.name}打出「随机数写谱」：每维度独立随机映射。`, "effect");
   } else if (definition.id === "ibeam") {
@@ -1283,15 +1303,10 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     targetChars.forEach(c => { c.disabledTurns = Math.max(c.disabledTurns, 1); });
     appendLog(`${player.name} 打出「塔之诅咒」：禁用自身1张+其他玩家${targetChars.length}张角色卡技能。`, "effect");
   } else if (definition.id === "one-unchanged") {
-    const candidates = player.characters.filter(c => !c.permanentlyDisabled);
-    if (!candidates.length) return fail("没有可恢复的角色");
-    const target_char = candidates.reduce((best, c) => {
-      const cCd = Math.max(0, ...Object.values(c.cooldowns || {})) + (c.disabledTurns || 0);
-      const bCd = Math.max(0, ...Object.values(best.cooldowns || {})) + (best.disabledTurns || 0);
-      return cCd > bCd ? c : best;
-    }, candidates[0]);
+    const target_char = player.characters.find(c => c.uid === payload.characterUid && !c.permanentlyDisabled);
+    if (!target_char) return fail("请选择要恢复的角色");
     target_char.disabledTurns = 0;
-    Object.keys(target_char.cooldowns).forEach(k => target_char.cooldowns[k] = 0);
+    Object.keys(target_char.cooldowns || {}).forEach(k => target_char.cooldowns[k] = 0);
     appendLog(`${player.name} 打出「一成不变」：${characterDefinition(target_char.id).name}技能恢复可用。`, "effect");
   } else if (definition.id === "refuse-chart") {
     const candidates = player.characters.filter(c => !c.permanentlyDisabled && c.disabledTurns === 0);
@@ -1303,7 +1318,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     appendLog(`${player.name} 打出「我就不写谱」：${def.name}技能重置为不可用，抽2张牌。`, "effect");
   } else if (definition.id === "tune-event") {
     const dim = randomDimension();
-    game.players.forEach((_, i) => setScore(i, dim, 24, { sourcePlayerIndex: playerIndex, fromSkillCard: true }));
+    game.players.forEach((_, i) => setScore(i, dim, 24, { sourcePlayerIndex: playerIndex }));
     appendLog(`${player.name} 打出「调所有人事件」：所有人的${DIMENSION_LABELS[dim]}变为24。`, "effect");
   } else if (definition.id === "chaos") {
     drawCards(playerIndex, 3);
@@ -1782,6 +1797,14 @@ function performBotAction() {
           }
           if (targetUids.length < 2) continue;
           payload.targetCharacterUids = targetUids.slice(0, 2 + Math.floor(Math.random() * 2));
+        } else if (def?.targetMode === TARGET_MODE.OWN_CHARACTER) {
+          const targetChar = player.characters.find(c => !c.permanentlyDisabled && (c.disabledTurns > 0 || Object.values(c.cooldowns || {}).some(v => v > 0)));
+          if (!targetChar) continue;
+          payload.characterUid = targetChar.uid;
+        } else if (def?.targetMode === TARGET_MODE.ANY_CHARACTER) {
+          const allChars = game.players.flatMap(p => p.characters).filter(c => !c.permanentlyDisabled);
+          if (!allChars.length) continue;
+          payload.characterUid = randomItem(allChars).uid;
         } else if (def?.target === "opponent") {
           payload.targetMemberId = game.players[botTargetIndex(playerIndex)].memberId;
         }
