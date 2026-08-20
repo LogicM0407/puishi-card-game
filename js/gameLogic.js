@@ -66,20 +66,43 @@ function createStarCard() {
   return { type: "star", cardId: "star", uid: `star_${cryptoRandom(8)}` };
 }
 
-function mitigateWithStars(player, amount) {
-  if (!player || amount >= 0) return amount;
+function offsetReductionWithStars(player, totalReduction) {
+  if (!player || totalReduction <= 0) return totalReduction;
   const perStar = Math.floor((player.scores.concrete || 0) / 8);
-  if (perStar <= 0) return amount;
-  let reduction = Math.abs(amount);
-  while (reduction > 0) {
+  if (perStar <= 0) return totalReduction;
+  let remaining = totalReduction;
+  while (remaining > 0) {
     const starIdx = player.hand.findIndex(c => c.type === "star");
     if (starIdx < 0) break;
     player.hand.splice(starIdx, 1);
-    reduction -= perStar;
+    remaining -= perStar;
     appendLog(`${player.name} 弃置一张【星】以抵消减分。`, "effect");
   }
   player.handCount = player.hand.length;
-  return reduction <= 0 ? 0 : -reduction;
+  return Math.max(0, remaining);
+}
+
+function resolveStarMitigation(memberId, accept) {
+  const pending = game.pendingStarMitigation;
+  if (!pending || pending.memberId !== memberId) return fail("没有待处理的减分抵消");
+  const playerIndex = game.players.findIndex(p => p.memberId === memberId);
+  if (playerIndex < 0) return fail("玩家不存在");
+  const player = game.players[playerIndex];
+  const total = pending.reductions.reduce((sum, r) => sum + r.amount, 0);
+  let remaining = total;
+  if (accept) {
+    remaining = offsetReductionWithStars(player, total);
+  }
+  game.pendingStarMitigation = null;
+  let toApply = remaining;
+  for (const r of pending.reductions) {
+    if (toApply <= 0) break;
+    const applyAmount = Math.min(r.amount, toApply);
+    applyScoreChange(playerIndex, r.dimension, -applyAmount, { sourcePlayerIndex: playerIndex, skipCrossing: true, skipStarPending: true });
+    toApply -= applyAmount;
+  }
+  appendLog(`${player.name} ${accept ? "接受" : "拒绝"}【星】抵消，剩余减分${remaining}点。`, "effect");
+  return ok();
 }
 
 function createGameState(members, totalRounds) {
@@ -215,8 +238,15 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     appendLog(`${player.name} 的配置水平减少被“地道东京爷”免疫。`, "effect");
     return 0;
   }
-  if (amount < 0) amount = mitigateWithStars(player, amount);
   if (!amount) return 0;
+
+  if (amount < 0 && player.hand.some(c => c.type === "star") && !context.skipStarPending) {
+    if (!game.pendingStarMitigation || game.pendingStarMitigation.memberId !== player.memberId) {
+      game.pendingStarMitigation = { memberId: player.memberId, reductions: [] };
+    }
+    game.pendingStarMitigation.reductions.push({ dimension, amount: Math.abs(amount) });
+    return 0;
+  }
 
   const beforeAll = game.players.map(candidate => candidate.scores[dimension]);
   player.scores[dimension] += amount;
@@ -1641,11 +1671,13 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   const ownTurn = game.currentPlayerIndex === playerIndex;
   let result = fail("未知操作");
 
-  if (game.pendingEvent && action !== "RESOLVE_EVENT") {
+  if (game.pendingEvent && action !== "RESOLVE_EVENT" && action !== "RESOLVE_STAR_MITIGATION") {
     return fail("请先完成当前事件牌结算");
   }
   if (action === "RESOLVE_EVENT") {
     result = resolvePendingEvent(memberId, payload);
+  } else if (action === "RESOLVE_STAR_MITIGATION") {
+    result = resolveStarMitigation(memberId, payload.accept === true);
   } else if (action === "DRAFT_BUY") {
     if (game.phase !== GAME_PHASE.DRAFT || !ownTurn) return fail("还没轮到你购置");
     result = buyCharacter(playerIndex, payload.characterId);
@@ -1815,6 +1847,17 @@ const botContext = {
 function performBotAction() {
   ui.botTimer = null;
   if (!room.isHost || !game || room.lifecycle !== ROOM_STATE.PLAYING) return;
+  // 机器人自动处理【星】抵消
+  if (game.pendingStarMitigation) {
+    const starPlayer = game.players.find(p => p.memberId === game.pendingStarMitigation.memberId);
+    if (starPlayer && isAIActor(starPlayer)) {
+      const r = resolveStarMitigation(starPlayer.memberId, true);
+      if (r.ok) commitGameState("RESOLVE_STAR_MITIGATION", "system", "", null);
+      else game.pendingStarMitigation = null;
+      scheduleBotAction();
+      return;
+    }
+  }
   const pendingIndex = game.pendingEvent
     ? game.players.findIndex(player => player.memberId === game.pendingEvent.responderMemberId && isAIActor(player))
     : -1;

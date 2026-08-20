@@ -30,6 +30,19 @@ function appendLog(text, type = "normal") {
 }
 
 function render() {
+  // 星抵消确认
+  if (!ui.modal && game?.pendingStarMitigation && game.pendingStarMitigation.memberId === room.myId && !isSpectator()) {
+    const me = myGamePlayer();
+    const pending = game.pendingStarMitigation;
+    const total = pending.reductions.reduce((s, r) => s + r.amount, 0);
+    const starCount = (me?.hand || []).filter(c => c.type === "star").length;
+    ui.modal = {
+      kind: "star-mitigation",
+      title: "抵消减分",
+      description: `你受到 ${total} 点减分。是否弃置【星】抵消？每8点具象动效抵消1点减分（当前具象 ${me?.scores?.concrete ?? 0}，持有 ${starCount} 张星）。`,
+      total
+    };
+  }
   // 若有待处理事件且当前我是响应者，且没有其他modal，自动弹出事件处理窗口
   if (!ui.modal && game?.pendingEvent && game.pendingEvent.responderMemberId === room.myId && !isSpectator()) {
     const pending = game.pendingEvent;
@@ -631,7 +644,12 @@ function renderActionModal() {
   const modal = ui.modal;
   const me = myGamePlayer();
   let choices = "";
-  if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
+  if (modal.kind === "star-mitigation") {
+    choices = `<div class="modal-actions" style="justify-content:center">
+      <button class="btn primary" data-star-decision="accept">${icon("check", 15)} 弃星抵消</button>
+      <button class="btn coral" data-star-decision="decline">${icon("x", 15)} 不抵消</button>
+    </div>`;
+  } else if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
     choices = `<div class="target-list">
@@ -778,7 +796,7 @@ function renderActionModal() {
       <div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${characterButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedCharacterUid ? "" : "disabled"}>花费 10 声望恢复</button></div>`;
   }
-  const canCloseModal = modal.kind !== "event-choose" && modal.kind !== "event-response";
+  const canCloseModal = modal.kind !== "event-choose" && modal.kind !== "event-response" && modal.kind !== "star-mitigation";
   app.insertAdjacentHTML("beforeend", `<div class="modal"><div class="modal-box">
     <div class="modal-head"><h3>${escapeHtml(modal.title)}</h3>${canCloseModal ? `<button class="btn icon-only small" id="close-modal" title="关闭">${icon("x", 15)}</button>` : ""}</div>
     <div class="modal-desc">${escapeHtml(modal.description)}</div>${choices}
@@ -894,6 +912,12 @@ function renderActionModal() {
   });
   document.querySelectorAll("[data-restore-character]").forEach(button => {
     button.onclick = () => { modal.selectedCharacterUid = button.dataset.restoreCharacter; render(); };
+  });
+  document.querySelectorAll("[data-star-decision]").forEach(button => {
+    button.onclick = () => {
+      ui.modal = null;
+      sendGameAction("RESOLVE_STAR_MITIGATION", { accept: button.dataset.starDecision === "accept" });
+    };
   });
   document.getElementById("confirm-modal")?.addEventListener("click", () => {
     ui.modal = null;
