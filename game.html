@@ -3559,58 +3559,59 @@ function executeSevenTrace(playerIndex, cardUid) {
   return ok();
 }
 
-function replaySkillEffect(playerIndex, cardId) {
+// 根据卡牌定义自动构造一份可用的打出 payload（供「一切未竟」强制打出复用）。
+// 无法构造合法目标时返回 null。
+function autoCardPayload(playerIndex, cardUid, definition) {
   const player = game.players[playerIndex];
-  const mult = skillCardPointMultiplier(player);
-  const self = { sourcePlayerIndex: playerIndex, fromSkillCard: true };
-  switch (cardId) {
-    case "study":
-      applyScoreChange(playerIndex, randomDimension(true), 3 * mult, { ...self, allowSelectionChange: true });
-      break;
-    case "only-this": {
-      const d = DIMENSIONS.reduce((best, dd) => player.scores[dd] > player.scores[best] ? dd : best, "config");
-      applyScoreChange(playerIndex, d, 3 * mult, { ...self, allowSelectionChange: true });
-      break;
+  const payload = { cardUid };
+  if (definition?.targetMode === TARGET_MODE.PLAYER || definition?.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+    const targetIndex = botTargetIndex(playerIndex);
+    if (targetIndex < 0) return null;
+    payload.targetMemberId = game.players[targetIndex].memberId;
+    if (definition.targetMode === TARGET_MODE.PLAYER_AND_DIMENSION) {
+      payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
     }
-    case "observe":
-    case "start-chart":
-      CHANGEABLE_DIMENSIONS.forEach(d => applyScoreChange(playerIndex, d, mult, self));
-      break;
-    case "burn-out":
-      CHANGEABLE_DIMENSIONS.forEach(d => applyScoreChange(playerIndex, d, mult, self));
-      break;
-    case "learn-from":
-      applyScoreChange(playerIndex, "innovation", 4 * mult, self);
-      break;
-    case "finish-chart": {
-      const g = Math.floor(player.scores.abstract / 3);
-      applyScoreChange(playerIndex, "config", g, self);
-      break;
+  } else if (definition?.targetMode === TARGET_MODE.OWN_DIMENSION) {
+    payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+  } else if (definition?.targetMode === TARGET_MODE.OWN_AND_OPPONENT_CHARACTERS) {
+    const ownChar = player.characters.find(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+    if (!ownChar) return null;
+    payload.ownCharacterUid = ownChar.uid;
+    const targetUids = [];
+    for (const opp of game.players) {
+      if (opp.memberId === player.memberId) continue;
+      for (const c of opp.characters) {
+        if (targetUids.length < 3) targetUids.push(c.uid);
+      }
     }
-    case "concise":
-      applyScoreChange(playerIndex, "concrete", -3, self);
-      applyScoreChange(playerIndex, "config", 4 * mult, self);
-      break;
-    case "image":
-      gainReputation(playerIndex, 2);
-      break;
-    case "x-xxx":
-      applyScoreChange(playerIndex, "selection", 8 * mult, { ...self, allowSelectionChange: true });
-      break;
-    case "record":
-      applyScoreChange(playerIndex, "selection", 7 * mult, { ...self, allowSelectionChange: true });
-      break;
-    case "rizline":
-      applyScoreChange(playerIndex, "concrete", 10 * mult, self);
-      break;
-    case "double-fall":
-      applyScoreChange(playerIndex, "config", 4 * mult, self);
-      if (player.scores.config > 20) applyScoreChange(playerIndex, "config", 4 * mult, self);
-      break;
-    default:
-      applyScoreChange(playerIndex, "abstract", 1, self);
-      break;
+    if (targetUids.length < 2) return null;
+    payload.targetCharacterUids = targetUids.slice(0, 2 + Math.floor(Math.random() * 2));
+  } else if (definition?.targetMode === TARGET_MODE.OWN_CHARACTER) {
+    const targetChar = player.characters.find(c => !c.permanentlyDisabled && (c.disabledTurns > 0 || Object.values(c.cooldowns || {}).some(v => v > 0)));
+    if (!targetChar) return null;
+    payload.characterUid = targetChar.uid;
+  } else if (definition?.targetMode === TARGET_MODE.ANY_CHARACTER) {
+    const allChars = game.players.flatMap(p => p.characters).filter(c => !c.permanentlyDisabled);
+    if (!allChars.length) return null;
+    payload.characterUid = randomItem(allChars).uid;
+  } else if (definition?.targetMode === TARGET_MODE.OWN_CHARACTER_AND_DIMENSION) {
+    const ownChar = player.characters.find(c => !c.permanentlyDisabled);
+    if (!ownChar) return null;
+    payload.characterUid = ownChar.uid;
+    payload.dimension = randomItem(CHANGEABLE_DIMENSIONS);
+  } else if (definition?.targetMode === TARGET_MODE.OWN_AVAILABLE_CHARACTER) {
+    const targetChar = player.characters.find(c => !c.permanentlyDisabled && c.disabledTurns === 0);
+    if (!targetChar) return null;
+    payload.characterUid = targetChar.uid;
+  } else if (definition?.targetMode === TARGET_MODE.SELF_CARD) {
+    const other = player.hand.find(c => c.uid !== cardUid && c.type !== "star");
+    if (other) payload.discardUid = other.uid;
+  } else if (definition?.target === "opponent") {
+    const targetIndex = botTargetIndex(playerIndex);
+    if (targetIndex < 0) return null;
+    payload.targetMemberId = game.players[targetIndex].memberId;
   }
+  return payload;
 }
 
 function executeEverythingUnfinished(playerIndex, cardUid) {
@@ -3629,12 +3630,37 @@ function executeEverythingUnfinished(playerIndex, cardUid) {
   let bestPriority = priority.length;
   game.skillHistory.forEach(h => {
     if (h.round >= game.round) return;
+    // 避免重放「一切未竟」/「七迹」这类流程牌，防止递归或重复分配
+    if (h.cardId === "everything-unfinished" || h.cardId === "seven-trace") return;
     const p = priority.indexOf(h.rarity);
     if (p >= 0 && p < bestPriority) { bestPriority = p; bestCardId = h.cardId; }
   });
   if (bestCardId) {
-    replaySkillEffect(playerIndex, bestCardId);
-    appendLog(`${player.name} 打出「一切未竟」：重放历史卡色最高的「${skillDefinition(bestCardId)?.name || "牌"}」效果。`, "effect");
+    // 自动生成一张该牌，加入手牌，并强制立刻打出
+    const newCard = createCard("skill", bestCardId);
+    player.hand.push(newCard);
+    player.handCount = player.hand.length;
+    const def = skillDefinition(bestCardId);
+    const autoPayload = autoCardPayload(playerIndex, newCard.uid, def) || { cardUid: newCard.uid };
+    const savedForce = game.forcePlay;
+    game.forcePlay = true;
+    let result;
+    try {
+      result = executeSkillCard(playerIndex, newCard.uid, autoPayload);
+    } finally {
+      game.forcePlay = savedForce;
+    }
+    if (!result.ok) {
+      const di = player.hand.findIndex(c => c.uid === newCard.uid);
+      if (di >= 0) {
+        player.hand.splice(di, 1);
+        game.discard.push(newCard);
+        player.handCount = player.hand.length;
+      }
+      appendLog(`${player.name} 打出「一切未竟」：生成了「${def?.name || "牌"}」但无法打出，已弃置。`, "event");
+    } else {
+      appendLog(`${player.name} 打出「一切未竟」：生成并强制打出了历史卡色最高的「${def?.name || "牌"}」。`, "effect");
+    }
   } else {
     appendLog(`${player.name} 打出「一切未竟」，但没有可回溯的历史技能牌。`, "event");
   }
