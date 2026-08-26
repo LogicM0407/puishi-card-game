@@ -2195,13 +2195,7 @@ function executeEverythingUnfinished(playerIndex, cardUid) {
       game.forcePlay = savedForce;
     }
     if (!result.ok) {
-      const di = player.hand.findIndex(c => c.uid === newCard.uid);
-      if (di >= 0) {
-        player.hand.splice(di, 1);
-        game.discard.push(newCard);
-        player.handCount = player.hand.length;
-      }
-      appendLog(`${player.name} 打出「一切未竟」：生成了「${def?.name || "牌"}」但无法打出，已弃置。`, "event");
+      appendLog(`${player.name} 打出「一切未竟」：生成了「${def?.name || "牌"}」，因规则限制无法打出，已加入手牌。`, "event");
     } else {
       appendLog(`${player.name} 打出「一切未竟」：生成并强制打出了历史卡色最高的「${def?.name || "牌"}」。`, "effect");
     }
