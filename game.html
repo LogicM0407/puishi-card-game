@@ -3531,32 +3531,82 @@ function executeSevenTrace(playerIndex, cardUid) {
     selected.push(c);
     game.deck.splice(i, 1);
   }
-  // 按总分降序排序玩家，循环分配
+  if (!selected.length) {
+    appendLog(`${player.name} 打出「七迹」，但牌堆没有可抽取的技能牌。`, "event");
+    return ok();
+  }
+  // 按当前总分从高到低排序玩家，确定选牌顺序
   const order = game.players.map((p, i) => ({ p, i }))
     .sort((a, b) => totalScore(b.p) - totalScore(a.p))
     .map(e => e.i);
-  let cursor = 0;
-  selected.forEach(card => {
-    let assigned = false;
-    for (let k = 0; k < order.length; k++) {
-      const targetIdx = order[(cursor + k) % order.length];
-      const target = game.players[targetIdx];
-      if (target.hand.length < (target.handLimit ?? 5)) {
-        target.hand.push(card);
-        target.handCount = target.hand.length;
-        appendLog(`${target.name} 从「七迹」中获得了「${skillDefinition(card.cardId)?.name || "牌"}」。`, "effect");
-        cursor = (cursor + k + 1) % order.length;
-        assigned = true;
-        break;
-      }
-    }
-    if (!assigned) {
-      game.discard.push(card);
-      appendLog("「七迹」：有牌因无人可收被弃置。", "event");
-    }
-  });
-  appendLog(`${player.name} 打出「七迹」，抽取${selected.length}张牌并分配。`, "effect");
+  game.sevenTrace = {
+    cards: selected,
+    order,
+    pos: 0,
+    responderMemberId: ""
+  };
+  appendLog(`${player.name} 打出「七迹」，抽取${selected.length}张牌，进入选牌阶段。`, "effect");
+  advanceSevenTrace();
   return ok();
+}
+
+function advanceSevenTrace() {
+  clearTimeout(ui.sevenTraceTimer);
+  ui.sevenTraceTimer = null;
+  if (!game.sevenTrace) return;
+  const st = game.sevenTrace;
+  if (!st.cards.length) {
+    game.sevenTrace = null;
+    return;
+  }
+  // 从当前位置起，找下一个有手牌空间的玩家（手牌满则跳过）
+  let chosen = null;
+  for (let k = 0; k < st.order.length; k++) {
+    const idx = st.order[(st.pos + k) % st.order.length];
+    const p = game.players[idx];
+    if (p.hand.length < (p.handLimit ?? 5)) {
+      chosen = idx;
+      st.pos = (st.pos + k + 1) % st.order.length;
+      break;
+    }
+  }
+  if (chosen == null) {
+    st.cards.forEach(c => game.discard.push(c));
+    appendLog("「七迹」：剩余牌因所有玩家手牌已满被弃置。", "event");
+    game.sevenTrace = null;
+    return;
+  }
+  const responder = game.players[chosen];
+  st.responderMemberId = responder.memberId;
+  // 15秒超时自动随机分配（仅主机执行）
+  ui.sevenTraceTimer = setTimeout(() => {
+    if (!game.sevenTrace || game.sevenTrace.responderMemberId !== responder.memberId) return;
+    const card = randomItem(game.sevenTrace.cards);
+    const r = assignSevenTraceCard(responder.memberId, card.uid, "选牌超时，系统自动分配了");
+    if (r.ok) commitGameState("SEVEN_TRACE_PICK", "system", "", null);
+  }, 15000);
+  if (isAIActor(responder)) scheduleBotAction();
+}
+
+function assignSevenTraceCard(memberId, cardUid, reason) {
+  const st = game.sevenTrace;
+  const player = game.players.find(p => p.memberId === memberId);
+  if (!st || !player) return fail("选牌状态不存在");
+  const cardIdx = st.cards.findIndex(c => c.uid === cardUid);
+  if (cardIdx < 0) return fail("该牌不存在或已被选走");
+  const [card] = st.cards.splice(cardIdx, 1);
+  player.hand.push(card);
+  player.handCount = player.hand.length;
+  appendLog(`${player.name} ${reason}「${skillDefinition(card.cardId)?.name || "牌"}」。`, "effect");
+  advanceSevenTrace();
+  return ok();
+}
+
+function resolveSevenTracePick(memberId, cardUid) {
+  const st = game.sevenTrace;
+  if (!st) return fail("当前没有七迹选牌");
+  if (st.responderMemberId !== memberId) return fail("还没轮到你选牌");
+  return assignSevenTraceCard(memberId, cardUid, "从「七迹」中选择了");
 }
 
 // 根据卡牌定义自动构造一份可用的打出 payload（供「一切未竟」强制打出复用）。
@@ -3906,7 +3956,7 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   const ownTurn = game.currentPlayerIndex === playerIndex;
   let result = fail("未知操作");
 
-  if (game.pendingEvent && action !== "RESOLVE_EVENT" && action !== "RESOLVE_STAR_MITIGATION" && action !== "ANSWER_ARITHMETIC" && action !== "OVERTURE_REDUCE" && action !== "OVERTURE_DISCARD" && action !== "DYSTOPIA_OFFSET") {
+  if (game.pendingEvent && action !== "RESOLVE_EVENT" && action !== "RESOLVE_STAR_MITIGATION" && action !== "ANSWER_ARITHMETIC" && action !== "OVERTURE_REDUCE" && action !== "OVERTURE_DISCARD" && action !== "DYSTOPIA_OFFSET" && action !== "SEVEN_TRACE_PICK") {
     return fail("请先完成当前事件牌结算");
   }
   if (action === "RESOLVE_EVENT") {
@@ -3969,6 +4019,8 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
     result = overtureReduce(playerIndex);
   } else if (action === "OVERTURE_DISCARD") {
     result = overtureDiscard(playerIndex);
+  } else if (action === "SEVEN_TRACE_PICK") {
+    result = resolveSevenTracePick(memberId, payload.cardUid);
   }
 
   if (result.ok) {
@@ -4149,6 +4201,18 @@ function performBotAction() {
     return;
   }
   if (game.pendingEvent) return;
+
+  // 机器人自动处理「七迹」选牌
+  if (game.sevenTrace && game.sevenTrace.responderMemberId) {
+    const stPlayer = game.players.find(p => p.memberId === game.sevenTrace.responderMemberId);
+    if (stPlayer && isAIActor(stPlayer)) {
+      const card = randomItem(game.sevenTrace.cards);
+      hostDispatch(stPlayer.memberId, "SEVEN_TRACE_PICK", { cardUid: card.uid }, "", true);
+      scheduleBotAction();
+      return;
+    }
+  }
+  if (game.sevenTrace) return;
 
   const playerIndex = game.currentPlayerIndex;
   const player = game.players[playerIndex];
@@ -5497,6 +5561,10 @@ function appendLog(text, type = "normal") {
 }
 
 function render() {
+  // 清理已失效的七迹弹窗（轮到他人或七迹已结束）
+  if (ui.modal?.kind === "seven-trace" && (!game?.sevenTrace || game.sevenTrace.responderMemberId !== room.myId)) {
+    ui.modal = null;
+  }
   // 星抵消确认
   if (!ui.modal && game?.pendingStarMitigation && game.pendingStarMitigation.memberId === room.myId && !isSpectator()) {
     const me = myGamePlayer();
@@ -5567,6 +5635,15 @@ function render() {
         }
       }, timeLimit);
     }
+  }
+  // 七迹选牌弹窗
+  if (!ui.modal && game?.sevenTrace && game.sevenTrace.responderMemberId === room.myId && !isSpectator()) {
+    ui.modal = {
+      kind: "seven-trace",
+      title: "七迹 · 选牌",
+      description: `从窗口中选1张牌加入手牌（剩余 ${game.sevenTrace.cards.length} 张）。15秒未选择将自动随机分配。`,
+      cards: game.sevenTrace.cards
+    };
   }
   if (ui.screen === "entry" || !room.connected) renderEntry();
   else if (room.lifecycle === ROOM_STATE.WAITING) renderLobby();
@@ -6327,6 +6404,14 @@ function renderActionModal() {
     </div>`;
   } else if (modal.kind === "arithmetic") {
     choices = `<div class="event-step"><div class="event-step-title">选择答案正确的选项（其中一道答案为9）</div><div class="target-list">${modal.questions.map((q, i) => `<button class="target-btn" data-arithmetic-answer="${i}"><span>${escapeHtml(q.text)} = ?</span><span class="target-score">选择</span></button>`).join("")}</div></div>`;
+  } else if (modal.kind === "seven-trace") {
+    const cardButtons = modal.cards.map(card => {
+      const def = skillDefinition(card.cardId);
+      const rarityLabel = SKILL_RARITY[def?.rarity]?.label || "白";
+      const categoryLabel = { growth: "成长", attack: "进攻", skill: "技能", draw: "抽牌" }[def?.category] || "技能";
+      return `<button class="target-btn" data-seven-trace-pick="${card.uid}"><span>${escapeHtml(def?.name || "牌")}（${rarityLabel} · ${categoryLabel}）</span><span class="target-score">选择</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择1张牌加入手牌</div><div class="target-list">${cardButtons}</div></div>`;
   } else if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
@@ -6763,6 +6848,12 @@ function renderActionModal() {
       sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId, dimension: button.dataset.abilityPeakDim });
     };
   });
+  document.querySelectorAll("[data-seven-trace-pick]").forEach(button => {
+    button.onclick = () => {
+      ui.modal = null;
+      sendGameAction("SEVEN_TRACE_PICK", { cardUid: button.dataset.sevenTracePick });
+    };
+  });
 }
 
 function renderSettlement() {
@@ -6943,6 +7034,7 @@ const ui = {
   hostPeriodicTimer: null,
   gapTimer: null,
   arithmeticTimer: null,
+  sevenTraceTimer: null,
   chatMessages: [],
   chatInput: "",
   chatOpen: false,

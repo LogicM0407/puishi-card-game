@@ -55,6 +55,7 @@ const ui = {
   hostPeriodicTimer: null,
   gapTimer: null,
   arithmeticTimer: null,
+  sevenTraceTimer: null,
   chatMessages: [],
   chatInput: "",
   chatOpen: false,

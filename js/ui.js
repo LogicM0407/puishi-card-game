@@ -30,6 +30,10 @@ function appendLog(text, type = "normal") {
 }
 
 function render() {
+  // 清理已失效的七迹弹窗（轮到他人或七迹已结束）
+  if (ui.modal?.kind === "seven-trace" && (!game?.sevenTrace || game.sevenTrace.responderMemberId !== room.myId)) {
+    ui.modal = null;
+  }
   // 星抵消确认
   if (!ui.modal && game?.pendingStarMitigation && game.pendingStarMitigation.memberId === room.myId && !isSpectator()) {
     const me = myGamePlayer();
@@ -100,6 +104,15 @@ function render() {
         }
       }, timeLimit);
     }
+  }
+  // 七迹选牌弹窗
+  if (!ui.modal && game?.sevenTrace && game.sevenTrace.responderMemberId === room.myId && !isSpectator()) {
+    ui.modal = {
+      kind: "seven-trace",
+      title: "七迹 · 选牌",
+      description: `从窗口中选1张牌加入手牌（剩余 ${game.sevenTrace.cards.length} 张）。15秒未选择将自动随机分配。`,
+      cards: game.sevenTrace.cards
+    };
   }
   if (ui.screen === "entry" || !room.connected) renderEntry();
   else if (room.lifecycle === ROOM_STATE.WAITING) renderLobby();
@@ -860,6 +873,14 @@ function renderActionModal() {
     </div>`;
   } else if (modal.kind === "arithmetic") {
     choices = `<div class="event-step"><div class="event-step-title">选择答案正确的选项（其中一道答案为9）</div><div class="target-list">${modal.questions.map((q, i) => `<button class="target-btn" data-arithmetic-answer="${i}"><span>${escapeHtml(q.text)} = ?</span><span class="target-score">选择</span></button>`).join("")}</div></div>`;
+  } else if (modal.kind === "seven-trace") {
+    const cardButtons = modal.cards.map(card => {
+      const def = skillDefinition(card.cardId);
+      const rarityLabel = SKILL_RARITY[def?.rarity]?.label || "白";
+      const categoryLabel = { growth: "成长", attack: "进攻", skill: "技能", draw: "抽牌" }[def?.category] || "技能";
+      return `<button class="target-btn" data-seven-trace-pick="${card.uid}"><span>${escapeHtml(def?.name || "牌")}（${rarityLabel} · ${categoryLabel}）</span><span class="target-score">选择</span></button>`;
+    }).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择1张牌加入手牌</div><div class="target-list">${cardButtons}</div></div>`;
   } else if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
@@ -1294,6 +1315,12 @@ function renderActionModal() {
       const { characterId, abilityId } = modal;
       ui.modal = null;
       sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId, dimension: button.dataset.abilityPeakDim });
+    };
+  });
+  document.querySelectorAll("[data-seven-trace-pick]").forEach(button => {
+    button.onclick = () => {
+      ui.modal = null;
+      sendGameAction("SEVEN_TRACE_PICK", { cardUid: button.dataset.sevenTracePick });
     };
   });
 }
