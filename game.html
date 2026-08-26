@@ -2447,17 +2447,21 @@ function overtureReduce(playerIndex) {
   if (player.overtureReduceUsed) return fail("本轮减分响应已用过");
   if (!game.lastReduction || game.lastReduction.turn !== game.turn.number) return fail("当前没有可响应的减分");
   const r = game.lastReduction;
-  applyScoreChange(r.playerIndex, r.dimension, r.amount, { sourcePlayerIndex: playerIndex, skipStarPending: true });
+  const victim = game.players[r.playerIndex];
+  if (!victim) return fail("减分目标不存在");
+  // 精确抵消：直接还原该维度分数，不触发被动/副作用
+  victim.scores[r.dimension] += r.amount;
+  // 惩罚：场上所有维度数值之和最高的玩家随机维度 -4（直接改值，避免连锁响应）
   const topEntry = game.players.reduce((best, p) => {
     const sumBest = DIMENSIONS.reduce((s, d) => s + best.scores[d], 0);
     const sumP = DIMENSIONS.reduce((s, d) => s + p.scores[d], 0);
     return sumP > sumBest ? p : best;
   }, game.players[0]);
-  const topIdx = game.players.indexOf(topEntry);
-  applyScoreChange(topIdx, randomDimension(), -4, { sourcePlayerIndex: playerIndex, skipStarPending: true });
+  const penaltyDim = randomDimension();
+  if (!topEntry.frozen) topEntry.scores[penaltyDim] -= 4;
   player.overtureReduceUsed = true;
   game.lastReduction = null;
-  appendLog(`${player.name} 发动「序曲·减分响应」：抵消减分，并使${topEntry.name}随机维度-4。`, "effect");
+  appendLog(`${player.name} 发动「序曲·减分响应」：精确抵消了${victim.name}的${DIMENSION_LABELS[r.dimension]}减分${r.amount}点，并使${topEntry.name}的${DIMENSION_LABELS[penaltyDim]}-4。`, "effect");
   return ok();
 }
 
@@ -2467,16 +2471,19 @@ function overtureDiscard(playerIndex) {
   if (player.overtureDiscardUsed) return fail("本轮弃牌响应已用过");
   if (!game.lastDiscard || game.lastDiscard.turn !== game.turn.number) return fail("当前没有可响应的弃牌");
   const d = game.lastDiscard;
-  // 抵消弃牌：若牌还在弃牌堆末尾，则还回
-  const top = game.discard[game.discard.length - 1];
   const victim = game.players[d.playerIndex];
+  // 精确抵消：在弃牌堆中按 uid 精确查找该牌并还回
   let restored = false;
-  if (top && top.uid === d.cardUid && victim) {
-    game.discard.pop();
-    victim.hand.push(top);
-    victim.handCount = victim.hand.length;
-    restored = true;
+  if (victim) {
+    const di = game.discard.findIndex(c => c.uid === d.cardUid);
+    if (di >= 0) {
+      const [card] = game.discard.splice(di, 1);
+      victim.hand.push(card);
+      victim.handCount = victim.hand.length;
+      restored = true;
+    }
   }
+  // 惩罚：手牌总数最多玩家弃置2张（直接弃置，不触发连锁响应）
   const mostHand = game.players.reduce((best, p) => (p.hand.length > best.hand.length ? p : best), game.players[0]);
   for (let i = 0; i < 2; i++) {
     if (!mostHand.hand.length) break;
@@ -2486,7 +2493,7 @@ function overtureDiscard(playerIndex) {
   mostHand.handCount = mostHand.hand.length;
   player.overtureDiscardUsed = true;
   game.lastDiscard = null;
-  appendLog(`${player.name} 发动「序曲·弃牌响应」${restored ? "：抵消弃牌" : ""}，并使${mostHand.name}弃置2张牌。`, "effect");
+  appendLog(`${player.name} 发动「序曲·弃牌响应」${restored ? `：精确抵消了${victim.name}的弃牌` : "（该牌已不在弃牌堆，无法还回）"}，并使${mostHand.name}弃置2张牌。`, "effect");
   return ok();
 }
 
