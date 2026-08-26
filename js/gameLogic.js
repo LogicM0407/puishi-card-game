@@ -2925,7 +2925,9 @@ function scheduleBotAction() {
     ? game.players.find(player => player.memberId === game.pendingEvent.responderMemberId)
     : (game.pendingStarMitigation
       ? game.players.find(player => player.memberId === game.pendingStarMitigation.memberId)
-      : null);
+      : (game.sevenTrace?.responderMemberId
+        ? game.players.find(player => player.memberId === game.sevenTrace.responderMemberId)
+        : null));
   const actor = pendingResponder || currentPlayer();
   if (!isAIActor(actor)) return;
   const delay = actor.difficulty === "normal" ? 650 + Math.random() * 500 : 850 + Math.random() * 650;
