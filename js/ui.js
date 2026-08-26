@@ -563,6 +563,7 @@ function renderPlayerStatuses(me, ownTurn) {
   const statuses = [
     me.reviewTurns > 0 ? `<span class="tag good">评议剩余${me.reviewTurns}回合</span>` : "",
     me.storyboard ? '<span class="tag good">故事板 +5</span>' : "",
+    me.worldTreeActive ? `<span class="tag good">生机 ${me.vitality ?? 0} / 3</span>` : "",
     me.frozen ? '<span class="tag bad">所有点数定格</span>' : "",
     me.commissionLocked ? '<span class="tag bad">约稿点数锁定</span>' : "",
     me.commissionLockAtRound != null && !me.commissionLocked ? `<span class="tag">第${me.commissionLockAtRound}轮锁定</span>` : "",
