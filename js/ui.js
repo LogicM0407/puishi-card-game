@@ -26,7 +26,7 @@ function showToast(text) {
 function appendLog(text, type = "normal") {
   if (!game) return;
   game.log.push({ round: game.round || 0, text, type });
-  if (game.log.length > 120) game.log.shift();
+  if (game.log.length > GAME_LOG_MAX) game.log.shift();
 }
 
 function render() {
@@ -370,8 +370,8 @@ function renderGame() {
           ${game.players.map((player, index) => renderPlayerMini(player, index, scoreRank, reputationRank)).join("")}
         </section>
         <section class="section">
-          <div class="section-head"><h2>操作记录</h2></div>
-          <div class="log-list">${game.log.slice().reverse().map(renderLog).join("")}</div>
+          <div class="section-head"><h2>操作记录</h2><button class="btn small" id="copy-log" title="复制本局完整操作日志，用于 bug 复盘">${icon("copy", 13)} 复制日志</button></div>
+          <div class="log-list">${game.log.slice(-120).reverse().map(renderLog).join("")}</div>
         </section>
       </aside>
       <div class="main-column">
@@ -380,6 +380,7 @@ function renderGame() {
       </div>
     </div>`;
   bindTopbar();
+  document.getElementById("copy-log")?.addEventListener("click", copyGameLog);
   if (draft) bindDraft(me);
   else bindTurn(me);
 }
@@ -442,6 +443,56 @@ function scrambleCharacterNames(text) {
 
 function renderLog(entry) {
   return `<div class="log-entry ${entry.type}"><span class="log-round">${entry.round ? `R${entry.round}` : "准备"}</span><span class="log-text">${escapeHtml(scrambleCharacterNames(entry.text))}</span></div>`;
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+  }
+  return fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  return new Promise((resolve) => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      resolve(true);
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+function copyGameLog() {
+  if (!game) return;
+  const lines = [];
+  lines.push("===== 谱师卡牌 对局日志 =====");
+  lines.push(`版本：${VERSION}`);
+  lines.push(`房间码：${room.code}`);
+  lines.push(`玩家：${game.players.map(p => `${p.name}${p.isBot ? "(AI)" : ""}`).join("、")}`);
+  if (game.globalModifier) {
+    const m = globalModifierDefinition(game.globalModifier);
+    lines.push(`全局状态：${m ? `${m.name}（${m.description}）` : game.globalModifier}`);
+  }
+  lines.push(`总回合：${game.totalRounds} · 当前：第${game.round}轮 · 阶段：${game.phase}`);
+  lines.push("");
+  game.log.forEach(entry => {
+    const roundLabel = entry.round ? `[R${entry.round}]` : "[准备]";
+    lines.push(`${roundLabel} ${entry.text}`);
+  });
+  const text = lines.join("\n");
+  copyToClipboard(text).then(ok => {
+    showToast(ok ? `已复制 ${game.log.length} 条日志到剪贴板` : "复制失败，请手动复制");
+  });
 }
 
 function renderDraft(me) {
