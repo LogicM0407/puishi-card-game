@@ -698,7 +698,7 @@ const CHANGELOG = Object.freeze([
     "新增：手牌上限系统（上限 = ceil(所有角色爆肝程度均值 + 5)，随角色购置动态更新）",
     "新增：初始手牌按 min(5, 手牌上限) 发放；摸牌按钮在手牌满时禁用",
     "新增：卡牌「弃牌」「信息」按钮；主动弃牌会减少本回合可打出的牌数",
-    "新增：本回合可打出牌数 = 手牌上限 - 已弃牌数；非常规摸牌后手牌溢出自动弃置超出部分（简化版）"
+    "新增：本回合可打出牌数 = 手牌上限 - 已弃牌数；非常规摸牌后手牌溢出强制打出，需选对象的牌直接弃置"
   ]},
   { version: "v2.2.1", items: [
     "修复：我就不写谱、杂技改为弹出选择框（分别选择角色/弃置牌），不再随机",
@@ -1524,6 +1524,7 @@ function createGameState(members, totalRounds) {
     log: [],
     ranking: [],
     pendingEvent: null,
+    forcePlay: false,
     turnDirection: 1,
     pecJamRestoreRound: null,
     sequence: 0,
@@ -1594,6 +1595,47 @@ function discardCard(playerIndex, cardUid) {
   handleNonPlayCardLoss(playerIndex, 1);
   appendLog(`${player.name} 主动弃置了「${name}」，本回合可打出的牌数-1。`, "effect");
   return ok();
+}
+
+function needsTargetSelection(definition) {
+  if (!definition) return false;
+  if (definition.targetMode && definition.targetMode !== TARGET_MODE.NONE) return true;
+  return definition.target === "opponent";
+}
+
+function discardOverflowCard(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return;
+  const [card] = player.hand.splice(idx, 1);
+  game.discard.push(card);
+}
+
+function forcePlayCard(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  const card = player.hand.find(c => c.uid === cardUid);
+  if (!card || card.type === "star") { discardOverflowCard(playerIndex, cardUid); return; }
+  const definition = skillDefinition(card.cardId);
+  if (!definition || needsTargetSelection(definition)) {
+    discardOverflowCard(playerIndex, cardUid);
+    if (definition) appendLog(`${player.name} 溢出的「${definition.name}」需要选择对象，弃置。`, "event");
+    return;
+  }
+  const savedPlayed = game.turn.skillCardsPlayed;
+  game.forcePlay = true;
+  let result;
+  try {
+    result = executeSkillCard(playerIndex, cardUid, {});
+  } finally {
+    game.forcePlay = false;
+    game.turn.skillCardsPlayed = savedPlayed;
+  }
+  if (!result.ok) {
+    discardOverflowCard(playerIndex, cardUid);
+    appendLog(`${player.name} 强制打出「${definition.name}」失败，弃置：${result.reason}。`, "event");
+  } else {
+    appendLog(`${player.name} 因手牌溢出强制打出了「${definition.name}」。`, "event");
+  }
 }
 
 function applyScoreChange(playerIndex, dimension, requestedAmount, context = {}) {
@@ -2091,17 +2133,21 @@ function drawCards(playerIndex, count, skillOnly = false) {
       results.push(drawCard(playerIndex));
     }
   }
-  // 非常规摸牌溢出处理：手牌超过上限时，随机弃置超出部分（简化版，不强制打出）
+  // 非常规摸牌溢出处理：手牌超过上限时，强制打出超出部分（需选对象的牌直接弃置）
   const player = game.players[playerIndex];
   if (player && player.hand.length > (player.handLimit ?? 5)) {
-    const excess = player.hand.length - (player.handLimit ?? 5);
-    for (let i = 0; i < excess; i++) {
+    let guard = 0;
+    while (player.hand.length > (player.handLimit ?? 5) && guard++ < 100) {
       const idx = Math.floor(Math.random() * player.hand.length);
-      const [removed] = player.hand.splice(idx, 1);
+      forcePlayCard(playerIndex, player.hand[idx].uid);
+    }
+    // 兜底：若仍超标，直接弃置超出部分
+    while (player.hand.length > (player.handLimit ?? 5)) {
+      const [removed] = player.hand.splice(0, 1);
       game.discard.push(removed);
     }
     player.handCount = player.hand.length;
-    appendLog(`${player.name} 手牌超过上限，弃置${excess}张。`, "event");
+    appendLog(`${player.name} 手牌超过上限，已强制打出/弃置超出部分。`, "event");
   }
   return results;
 }
@@ -2495,7 +2541,7 @@ function consumePlayedSkillCard(playerIndex, cardUid) {
   const [card] = player.hand.splice(idx, 1);
   game.discard.push(card);
   player.handCount = player.hand.length;
-  game.turn.skillCardsPlayed++;
+  if (!game.forcePlay) game.turn.skillCardsPlayed++;
   return true;
 }
 
@@ -2505,16 +2551,17 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   if (cardIndex < 0) return fail("手牌不存在");
   const card = player.hand[cardIndex];
   const definition = skillDefinition(card.cardId);
-  const ownTurn = game.currentPlayerIndex === playerIndex;
+  const forcePlay = game.forcePlay === true;
+  const ownTurn = game.currentPlayerIndex === playerIndex || forcePlay;
   if (!definition) return fail("卡牌数据不存在");
   if (!ownTurn) return fail("该牌只能在自己的回合打出");
   if (game.round === 1) return fail("第1轮不能使用技能牌");
-  if (isAllSkillBlocked(player)) return fail("本回合不能发动技能");
-  if (player.silenced && game.turn.skillCardsPlayed >= 1) return fail("静默状态仅能打出一张手牌");
-  if (player.skillCardLimit != null && game.turn.skillCardsPlayed >= player.skillCardLimit) {
+  if (isAllSkillBlocked(player) && !forcePlay) return fail("本回合不能发动技能");
+  if (player.silenced && game.turn.skillCardsPlayed >= 1 && !forcePlay) return fail("静默状态仅能打出一张手牌");
+  if (player.skillCardLimit != null && game.turn.skillCardsPlayed >= player.skillCardLimit && !forcePlay) {
     return fail(`本回合最多打出${player.skillCardLimit}张技能牌`);
   }
-  if (game.turn.playableCards != null && game.turn.skillCardsPlayed >= game.turn.playableCards) {
+  if (game.turn.playableCards != null && game.turn.skillCardsPlayed >= game.turn.playableCards && !forcePlay) {
     return fail("本回合可打出的牌数已达上限");
   }
 
