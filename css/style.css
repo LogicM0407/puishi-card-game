@@ -239,6 +239,9 @@
   .setting-row:last-child { border-bottom: 0; }
   .setting-label span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
   .round-input { width: 96px; min-height: 36px; text-align: center; }
+  .checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .checkbox-label input { width: 16px; height: 16px; accent-color: var(--cyan); cursor: pointer; }
+  .checkbox-label input:disabled { cursor: not-allowed; opacity: .5; }
   .segment { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .segment button {
     min-width: 43px;
@@ -292,6 +295,9 @@
   .player-mini.me { border-left: 2px solid var(--yellow); padding-left: 8px; }
   .player-mini-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
   .player-mini-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-rank { display: flex; flex-wrap: wrap; gap: 3px 8px; margin-bottom: 6px; }
+  .mini-rank-item { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .mini-rank-item b { color: var(--text); font-weight: 800; }
   .mini-dims { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
   .mini-dim { text-align: center; color: var(--muted); font-size: 9px; }
   .mini-dim b { display: block; color: var(--text); font-size: 11px; margin-top: 2px; }
@@ -492,6 +498,21 @@
     background: rgba(112, 167, 255, .08);
     font-size: 12px;
   }
+  .global-modifier-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--yellow);
+    border-radius: 6px;
+    background: rgba(242, 201, 76, .08);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .global-modifier-banner strong { color: var(--yellow); }
+  .global-modifier-banner span { color: #e5dcae; }
   .modal {
     position: fixed;
     inset: 0;

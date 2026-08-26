@@ -248,6 +248,9 @@
   .setting-row:last-child { border-bottom: 0; }
   .setting-label span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
   .round-input { width: 96px; min-height: 36px; text-align: center; }
+  .checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .checkbox-label input { width: 16px; height: 16px; accent-color: var(--cyan); cursor: pointer; }
+  .checkbox-label input:disabled { cursor: not-allowed; opacity: .5; }
   .segment { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
   .segment button {
     min-width: 43px;
@@ -301,6 +304,9 @@
   .player-mini.me { border-left: 2px solid var(--yellow); padding-left: 8px; }
   .player-mini-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
   .player-mini-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini-rank { display: flex; flex-wrap: wrap; gap: 3px 8px; margin-bottom: 6px; }
+  .mini-rank-item { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .mini-rank-item b { color: var(--text); font-weight: 800; }
   .mini-dims { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
   .mini-dim { text-align: center; color: var(--muted); font-size: 9px; }
   .mini-dim b { display: block; color: var(--text); font-size: 11px; margin-top: 2px; }
@@ -501,6 +507,21 @@
     background: rgba(112, 167, 255, .08);
     font-size: 12px;
   }
+  .global-modifier-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--yellow);
+    border-radius: 6px;
+    background: rgba(242, 201, 76, .08);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .global-modifier-banner strong { color: var(--yellow); }
+  .global-modifier-banner span { color: #e5dcae; }
   .modal {
     position: fixed;
     inset: 0;
@@ -683,6 +704,7 @@
     .chat-panel.collapsed { left: 0; right: auto; width: auto; border-radius: 0 8px 0 0; }
     .chat-panel.collapsed .chat-header { border-radius: 0 8px 0 0; }
   }
+</style>
 
 </style>
 </head>
@@ -692,8 +714,13 @@
 <script>
 "use strict";
 
-const VERSION = "v2.2.2";
+const VERSION = "v2.3.0";
 const CHANGELOG = Object.freeze([
+  { version: "v2.3.0", items: [
+    "新增：全局状态玩法——房主可在大厅勾选「启用全局状态」，开局时随机抽取一种状态并整局生效",
+    "新增：12种全局状态（大合作/大节制/至死不渝/复读/缄默症候群/藏锋/WJC/一觉醒来/2.0时代/存货积压/俄罗斯轮盘/唯有纯粹）",
+    "新增：游戏主界面顶部常驻显示当前全局状态名称与简短描述"
+  ]},
   { version: "v2.2.2", items: [
     "新增：手牌上限系统（上限 = ceil(所有角色爆肝程度均值 + 5)，随角色购置动态更新）",
     "新增：初始手牌按 min(5, 手牌上限) 发放；摸牌按钮在手牌满时禁用",
@@ -1271,6 +1298,30 @@ const EVENT_CARDS = Object.freeze([
   }
 ]);
 
+const GLOBAL_MODIFIERS = Object.freeze([
+  { id: "cooperation", name: "大合作时代", description: "初始购置点数由12点增加至15点。" },
+  { id: "restraint", name: "大节制时代", description: "初始购置点数由12点降低至10点。" },
+  { id: "loyalty", name: "至死不渝", description: "事件牌【退坑】与【崩所有人RPE】将从牌堆中永久移除。" },
+  { id: "repeat", name: "复读", description: "每张角色卡的每个技能首次发动后，可立即再发动一次（仅限当前回合）。" },
+  { id: "silence", name: "缄默症候群", description: "所有玩家的声望值与声望排名不可见，实际数值仍参与结算。" },
+  { id: "hidden", name: "藏锋", description: "所有人的配置/具象/抽象三项分数不可见，实际数值仍参与结算。" },
+  { id: "wjc", name: "WJC", description: "无法看到其他玩家拥有的谱师牌；日志中他人角色名显示为乱码。" },
+  { id: "wakeup", name: "一觉醒来", description: "角色卡六维按稀有度调整：S级-50%、A+级-25%、A与B+不变、B级+25%、C级+50%（向上取整）。" },
+  { id: "two-zero", name: "2.0时代", description: "任意维度提升时额外+1；触发【崩所有人RPE】后此效果永久消失。" },
+  { id: "stockpile", name: "存货积压", description: "正常摸牌改为3张；第4轮起回合结束时手牌>0则随机维度扣当前手牌数。" },
+  { id: "roulette", name: "俄罗斯轮盘", description: "每轮开始时随机决定是否为本局最终轮；进行轮数≥设定总回合×2时强制结束。" },
+  { id: "pure", name: "唯有纯粹", description: "声望固定为0且不显示；所有声望增减改为随机维度同数值增减。" }
+]);
+
+const GLOBAL_WAKEUP_MULTIPLIERS = Object.freeze({
+  S: 0.5,
+  "A+": 0.75,
+  A: 1,
+  "B+": 1,
+  B: 1.25,
+  C: 1.5
+});
+
 const ROOM_STORAGE_KEY = "puishi-card-last-room-v1";
 
 const EVENT_LOG_MAX = 500;
@@ -1332,6 +1383,10 @@ function eventDefinition(id) {
   return EVENT_CARDS.find(card => card.id === id);
 }
 
+function globalModifierDefinition(id) {
+  return GLOBAL_MODIFIERS.find(modifier => modifier.id === id);
+}
+
 function randomItem(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
@@ -1385,9 +1440,26 @@ function isSpectator() {
   return Boolean(myMember()?.spectator || (game && !myGamePlayer()));
 }
 
+function characterStats(characterId) {
+  const def = characterDefinition(characterId);
+  if (!def) return null;
+  if (game?.globalModifier === "wakeup" && game.adjustedCharacterStats?.[characterId]) {
+    return game.adjustedCharacterStats[characterId];
+  }
+  return def.stats;
+}
+
+function globalModifierActive(id) {
+  return game?.globalModifier === id;
+}
+
 function createDeck() {
   const connectedCount = roomPlayers().filter(member => member.connected).length;
-  const events = EVENT_CARDS.filter(card => card.id !== "tribunal" || connectedCount >= 4);
+  const events = EVENT_CARDS.filter(card => {
+    if (card.id === "tribunal" && connectedCount < 4) return false;
+    if (globalModifierActive("loyalty") && (card.id === "retire" || card.id === "rpe")) return false;
+    return true;
+  });
   // 稀有事件牌权重为普通事件牌的 1/5：普通事件 5 份，稀有事件 1 份。
   // 舞萌/中二/音击需要多步交互，概率过高会频繁打断流程，同样按 1 份处理。
   const lowFrequencyEvents = new Set(["maimai", "chunithm", "ongeki"]);
@@ -1454,12 +1526,29 @@ function resolveStarMitigation(memberId, accept) {
   return ok();
 }
 
-function createGameState(members, totalRounds) {
+function createGameState(members, totalRounds, globalModifier = null) {
   const activeMembers = members.filter(member => !member.spectator && member.connected);
   const orderedMembers = shuffle([...activeMembers]);
+  const initialFunds = globalModifier === "cooperation" ? 15 : globalModifier === "restraint" ? 10 : 12;
+  const initialReputation = globalModifier === "pure" ? 0 : 50;
+  const adjustedCharacterStats = {};
+  if (globalModifier === "wakeup") {
+    CHARACTERS.forEach(character => {
+      const multiplier = GLOBAL_WAKEUP_MULTIPLIERS[character.rarity] ?? 1;
+      const stats = {};
+      CHARACTER_STATS.forEach(stat => {
+        stats[stat] = Math.ceil(character.stats[stat] * multiplier);
+      });
+      adjustedCharacterStats[character.id] = stats;
+    });
+  }
   return {
     phase: GAME_PHASE.DRAFT,
     totalRounds,
+    globalModifier,
+    adjustedCharacterStats,
+    twoZeroDisabled: false,
+    rouletteFinalRound: null,
     round: 0,
     currentPlayerIndex: 0,
     draftDone: [],
@@ -1479,9 +1568,9 @@ function createGameState(members, totalRounds) {
       handCount: 0,
       handLimit: 5,
       characters: [],
-      funds: 12,
+      funds: initialFunds,
       scores: { selection: 0, config: 0, abstract: 0, concrete: 0, innovation: 0 },
-      reputation: 50,
+      reputation: initialReputation,
       disableCharacterTurns: 0,
       disableAllSkillTurns: 0,
       disableUntilOwnTurn: false,
@@ -1553,6 +1642,15 @@ function characterSelection(character) {
 function gainReputation(playerIndex, amount, options = {}) {
   const player = game.players[playerIndex];
   if (!player || player.frozen || !amount) return 0;
+  if (globalModifierActive("pure")) {
+    const dimension = randomDimension(true);
+    applyScoreChange(playerIndex, dimension, amount, {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true
+    });
+    appendLog(`${player.name} 的声望变化转为${DIMENSION_LABELS[dimension]}${amount > 0 ? "+" : ""}${amount}。`, "effect");
+    return amount;
+  }
   const before = player.reputation;
   if (options.cap != null && amount > 0) {
     player.reputation = player.reputation >= options.cap
@@ -1571,7 +1669,7 @@ function skillCardPointMultiplier(player) {
 function handLimitOf(player) {
   if (!player || !player.characters.length) return 5;
   const totalStamina = player.characters.reduce((sum, character) => {
-    return sum + (characterDefinition(character.id)?.stats.stamina || 0);
+    return sum + (characterStats(character.id)?.stamina || 0);
   }, 0);
   return Math.ceil(totalStamina / player.characters.length + 5);
 }
@@ -1658,6 +1756,9 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     if (source && source.memberId !== player.memberId) source.disableUntilOwnTurn = true;
     appendLog(`${player.name} 的配置水平减少被“地道东京爷”免疫。`, "effect");
     return 0;
+  }
+  if (amount > 0 && globalModifierActive("two-zero") && !game.twoZeroDisabled) {
+    amount += 1;
   }
   if (!amount) return 0;
 
@@ -1864,7 +1965,7 @@ function resolveEvent(playerIndex, card) {
         .map(instance => ({
           instance,
           definition: characterDefinition(instance.id),
-          value: CHARACTER_STATS.reduce((sum, stat) => sum + characterDefinition(instance.id).stats[stat], 0)
+          value: CHARACTER_STATS.reduce((sum, stat) => sum + characterStats(instance.id)[stat], 0)
         }))
         .sort((a, b) => b.value - a.value || a.definition.name.localeCompare(b.definition.name, "zh-CN"))[0].instance;
       strongest.permanentlyDisabled = true;
@@ -1933,6 +2034,7 @@ function resolveEvent(playerIndex, card) {
       }
     }
   } else if (event.id === "rpe") {
+    if (globalModifierActive("two-zero")) game.twoZeroDisabled = true;
     game.players.forEach((target, targetIndex) => {
       const hasPeCharacter = target.characters.some(character => characterDefinition(character.id)?.isPE);
       if (hasPeCharacter) {
@@ -1969,7 +2071,7 @@ function resolveEvent(playerIndex, card) {
   } else if (event.id === "chart-missing") {
     const hasLowStamina = player.characters.some(instance => {
       const def = characterDefinition(instance.id);
-      const stamina = def ? def.stats.stamina + (instance.staminaBonus || 0) : 0;
+      const stamina = characterStats(instance.id)?.stamina + (instance.staminaBonus || 0);
       return def && stamina <= 5;
     });
     if (!hasLowStamina) {
@@ -2265,9 +2367,9 @@ function buyCharacter(playerIndex, characterId) {
     recruited: false
   });
   // 将角色的选曲品味加到玩家得分中
-  player.scores.selection += character.stats.selection;
+  player.scores.selection += characterStats(characterId).selection;
   recomputeHandLimit(player);
-  appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${character.stats.selection}），剩余${player.funds}点。`, "effect");
+  appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${characterStats(characterId).selection}），剩余${player.funds}点。`, "effect");
   return ok();
 }
 
@@ -2308,7 +2410,8 @@ function canActivateCharacter(player, instance, ability) {
   if (player.silenced) return fail("静默状态不可发动角色技能");
   if (instance.permanentlyDisabled) return fail("该角色技能已永久失效");
   const useKey = `${instance.uid}:${ability.id}`;
-  if (game.turn.usedAbilityIds.includes(useKey)) return fail("该技能本回合已经发动过");
+  const repeatReady = globalModifierActive("repeat") && Boolean(instance.repeatAvailable?.[ability.id]);
+  if (game.turn.usedAbilityIds.includes(useKey) && !repeatReady) return fail("该技能本回合已经发动过");
   const firstRound = game.round === 1;
   if (firstRound && player.firstRoundSkillUsed) return fail("第1轮只能发动1次角色技能");
   if (!firstRound && (player.disableCharacterTurns > 0 || isAllSkillBlocked(player) || instance.disabledTurns > 0)) {
@@ -2350,8 +2453,9 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
 
   if (game.round === 1) {
+    const baseStats = characterStats(characterId);
     DIMENSIONS.forEach(dimension => {
-      player.scores[dimension] = definition.stats[dimension];
+      player.scores[dimension] = baseStats[dimension];
     });
     player.firstRoundSkillUsed = true;
     appendLog(`${player.name} 以「${definition.name}」确定谱面全部五维初始分数。`, "effect");
@@ -2528,9 +2632,20 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
+  const wasFirstActivation = instance.uses[ability.id] === 0;
   instance.cooldowns[ability.id] = actualCooldown;
   instance.uses[ability.id]++;
   game.turn.usedAbilityIds.push(`${instance.uid}:${ability.id}`);
+  if (globalModifierActive("repeat")) {
+    if (wasFirstActivation) {
+      instance.repeatAvailable = instance.repeatAvailable || {};
+      instance.repeatAvailable[ability.id] = true;
+      instance.cooldowns[ability.id] = 0;
+      appendLog(`${player.name} 触发「复读」：${definition.name}的技能可立即再发动一次。`, "effect");
+    } else if (instance.repeatAvailable?.[ability.id]) {
+      instance.repeatAvailable[ability.id] = false;
+    }
+  }
   return ok();
 }
 
@@ -2622,7 +2737,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     const dim = payload.dimension && CHANGEABLE_DIMENSIONS.includes(payload.dimension) ? payload.dimension : null;
     if (!dim) return fail("请选择一项属性");
     const def = characterDefinition(ownChar.id);
-    const amount = def.stats[dim] || 0;
+    const amount = characterStats(ownChar.id)?.[dim] || 0;
     applyScoreChange(playerIndex, dim, amount, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「发力」：将${def.name}的${DIMENSION_LABELS[dim]}${amount}点加到自身。`, "effect");
   } else if (definition.id === "consult") {
@@ -2693,7 +2808,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     }
     if (!chosen) return fail("请选择要参考的角色");
     const chosenDef = characterDefinition(chosen.id);
-    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => chosenDef.stats[d] > chosenDef.stats[best] ? d : best, "config");
+    const chosenStats = characterStats(chosen.id);
+    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => chosenStats[d] > chosenStats[best] ? d : best, "config");
     applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「写合作谱」：参考${chosenOwnerName}的${chosenDef.name}（${DIMENSION_LABELS[dim]}）+5。`, "effect");
   } else if (definition.id === "observe") {
@@ -3041,6 +3157,18 @@ function endTurn(playerIndex) {
     player.pendingDisableCharacterTurns = 0;
   }
 
+  // 存货积压：从第4轮起，回合结束时手牌>0则随机维度扣除当前手牌数
+  if (globalModifierActive("stockpile") && game.round >= 4 && player.hand.length > 0) {
+    const penalty = player.hand.length;
+    const dimension = randomDimension(true);
+    applyScoreChange(playerIndex, dimension, -penalty, {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true,
+      skipStarPending: true
+    });
+    appendLog(`「存货积压」：${player.name} 回合结束，手牌${penalty}张，${DIMENSION_LABELS[dimension]}-${penalty}。`, "event");
+  }
+
   if (
     player.extraTurnCredits > 0 &&
     player.extraTurnEligibleAfter != null &&
@@ -3066,9 +3194,20 @@ function endTurn(playerIndex) {
     if (game.currentPlayerIndex >= game.players.length) {
       game.currentPlayerIndex = 0;
       game.round++;
-      if (game.round > game.totalRounds) {
+      const shouldSettle = globalModifierActive("roulette")
+        ? (game.round > game.totalRounds * 2) ||
+          (game.rouletteFinalRound != null && game.round > game.rouletteFinalRound)
+        : game.round > game.totalRounds;
+      if (shouldSettle) {
         settleGame();
         return ok();
+      }
+      if (globalModifierActive("roulette") && game.rouletteFinalRound == null) {
+        const roll = 1 + Math.floor(Math.random() * game.totalRounds);
+        if (roll === game.totalRounds) {
+          game.rouletteFinalRound = game.round;
+          appendLog(`「俄罗斯轮盘」：第${game.round}轮被随机决定为最终轮。`, "event");
+        }
       }
       appendLog(`第${game.round}轮开始。`, "event");
     }
@@ -3160,7 +3299,13 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
     if (game.turn.hasDrawn) return fail("本回合已经摸过牌");
     if (player.hand.length >= (player.handLimit ?? 5)) return fail("手牌已满，请先使用或弃牌");
     game.turn.hasDrawn = true;
-    result = ok({ draw: drawCard(playerIndex) });
+    if (globalModifierActive("stockpile")) {
+      const count = Math.min(3, Math.max(0, (player.handLimit ?? 5) - player.hand.length));
+      const results = drawCards(playerIndex, count);
+      result = ok({ draw: { kind: "multiple", count, results } });
+    } else {
+      result = ok({ draw: drawCard(playerIndex) });
+    }
   } else if (action === "PLAY_CARD") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合使用技能牌");
     result = executeSkillCard(playerIndex, payload.cardUid, payload);
@@ -3272,8 +3417,10 @@ function botCharacterChoice(playerIndex) {
     selection: ["selection", "config"]
   }[player.aiStrategy] || ["config", "innovation"];
   return affordable.sort((a, b) => {
-    const scoreA = strategyStats.reduce((sum, stat) => sum + a.stats[stat], 0);
-    const scoreB = strategyStats.reduce((sum, stat) => sum + b.stats[stat], 0);
+    const statsA = characterStats(a.id);
+    const statsB = characterStats(b.id);
+    const scoreA = strategyStats.reduce((sum, stat) => sum + statsA[stat], 0);
+    const scoreB = strategyStats.reduce((sum, stat) => sum + statsB[stat], 0);
     return scoreB - scoreA || RARITY[b.rarity].price - RARITY[a.rarity].price;
   })[0];
 }
@@ -3641,10 +3788,15 @@ function startGame() {
   const players = roomPlayers().filter(member => member.connected);
   if (room.lifecycle !== ROOM_STATE.WAITING) return;
   if (players.length < 2) return showToast("至少需要2名玩家");
-  game = createGameState(players, room.settings.totalRounds);
+  const globalModifier = room.settings.globalStateEnabled ? randomItem(GLOBAL_MODIFIERS).id : null;
+  game = createGameState(players, room.settings.totalRounds, globalModifier);
   processedGameActions.clear();
   room.lifecycle = ROOM_STATE.PLAYING;
-  appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有12点购置点数。`, "event");
+  appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有${game.players[0]?.funds ?? 12}点购置点数。`, "event");
+  if (globalModifier) {
+    const modifier = globalModifierDefinition(globalModifier);
+    appendLog(`全局状态生效：【${modifier.name}】${modifier.description}`, "event");
+  }
   pushSystemChat("游戏已开始，祝大家好运！");
   commitGameState("SYNC", "system", "", null);
 }
@@ -4289,6 +4441,9 @@ function handleRoomAction(memberId, action, payload) {
       room.settings.totalRounds = rounds;
       broadcastLobby();
     }
+  } else if (action === "UPDATE_GLOBAL_STATE" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
+    room.settings.globalStateEnabled = Boolean(payload.enabled);
+    broadcastLobby();
   } else if (action === "START" && memberId === room.hostId) {
     startGame();
   } else if (action === "BACK_TO_LOBBY" && memberId === room.hostId && room.lifecycle === ROOM_STATE.SETTLEMENT) {
@@ -4428,7 +4583,7 @@ async function createRoom(name) {
     room.hostId = room.myId;
     room.isHost = true;
     room.lifecycle = ROOM_STATE.WAITING;
-    room.settings = { totalRounds: 10 };
+    room.settings = { totalRounds: 10, globalStateEnabled: false };
     saveRoomSession(code, name);
     room.members = [{
       id: room.myId,
@@ -4897,6 +5052,10 @@ function renderLobby() {
             <div class="setting-label">初始购置点数<span>购置角色后进入第1轮</span></div>
             <strong>12</strong>
           </div>
+          <div class="setting-row">
+            <div class="setting-label">启用全局状态<span>开局时随机一种全局状态，整局生效（可选玩法）</span></div>
+            <label class="checkbox-label"><input type="checkbox" id="global-state-toggle" ${room.settings.globalStateEnabled ? "checked" : ""} ${room.isHost ? "" : "disabled"}> 启用</label>
+          </div>
         </section>
         <div class="notice">房间人数大于1人即可开始。游戏开始后新成员只能观战。</div>
         ${room.isHost && room.lifecycle === ROOM_STATE.WAITING ? `
@@ -4925,6 +5084,9 @@ function renderLobby() {
       const rounds = Number(event.target.value);
       if (Number.isSafeInteger(rounds) && rounds > 0) sendRoomAction("UPDATE_ROUNDS", { totalRounds: rounds });
       else render();
+    };
+    document.getElementById("global-state-toggle").onchange = event => {
+      sendRoomAction("UPDATE_GLOBAL_STATE", { enabled: event.target.checked });
     };
     document.getElementById("add-bot-simple")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "simple" }));
     document.getElementById("add-bot-normal")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "normal" }));
@@ -4956,20 +5118,46 @@ function renderMemberRow(member) {
   </div>`;
 }
 
+function computeRankMap(players, scoreFn) {
+  const map = new Map();
+  players.forEach(player => {
+    const better = players.filter(other => scoreFn(other) > scoreFn(player)).length;
+    map.set(player.memberId, better + 1);
+  });
+  return map;
+}
+
+function isReputationHidden() {
+  return globalModifierActive("silence") || globalModifierActive("pure");
+}
+
+function isDimensionHidden(dim) {
+  return globalModifierActive("hidden") && (dim === "config" || dim === "abstract" || dim === "concrete");
+}
+
+function renderGlobalModifierBanner() {
+  const modifier = globalModifierDefinition(game?.globalModifier);
+  if (!modifier) return "";
+  return `<div class="global-modifier-banner">${icon("zap", 15)} <strong>全局状态：${escapeHtml(modifier.name)}</strong><span>${escapeHtml(modifier.description)}</span></div>`;
+}
+
 function renderGame() {
   const me = myGamePlayer();
   const current = currentPlayer();
   const draft = game.phase === GAME_PHASE.DRAFT;
   const phaseLabel = draft ? "购置阶段" : `第${game.round}/${game.totalRounds}轮`;
+  const scoreRank = computeRankMap(game.players, totalScore);
+  const reputationRank = computeRankMap(game.players, player => player.reputation ?? 0);
   app.innerHTML = `
     ${topbar("谱师卡牌", `<span class="state-pill">${phaseLabel}</span>
       <div class="turn-line">当前：<strong>${escapeHtml(current?.name || "")}</strong>${draft ? "购置角色" : "进行回合"}</div>`)}
+    ${renderGlobalModifierBanner()}
     ${isSpectator() ? `<div class="spectator-banner">${icon("eye", 15)} 观战模式：你可以查看公开数据，但不能查看手牌或执行操作。</div>` : ""}
     <div class="game-layout">
       <aside class="side-column">
         <section class="section">
           <div class="section-head"><h2>玩家</h2><span class="section-note">${game.players.length}人</span></div>
-          ${game.players.map((player, index) => renderPlayerMini(player, index)).join("")}
+          ${game.players.map((player, index) => renderPlayerMini(player, index, scoreRank, reputationRank)).join("")}
         </section>
         <section class="section">
           <div class="section-head"><h2>操作记录</h2></div>
@@ -4989,14 +5177,14 @@ function renderGame() {
 function renderDimensionPanel(player) {
   if (!player) return "";
   return `<div class="dimension-panel">
-    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]} · ${SCORE_WEIGHTS[dim] * 100}%</div><div class="dimension-value">${formatNumber(player.scores[dim])}</div></div>`).join("")}
-    <div class="dimension reputation"><div class="dimension-label">声望 / 总分</div><div class="dimension-value">${player.reputation} <span class="dimension-total">· ${totalScore(player)}</span></div></div>
+    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]} · ${SCORE_WEIGHTS[dim] * 100}%</div><div class="dimension-value">${isDimensionHidden(dim) ? "?" : formatNumber(player.scores[dim])}</div></div>`).join("")}
+    <div class="dimension reputation"><div class="dimension-label">声望 / 总分</div><div class="dimension-value">${isReputationHidden() ? "?" : player.reputation} <span class="dimension-total">· ${totalScore(player)}</span></div></div>
   </div>`;
 }
 
 
 
-function renderPlayerMini(player, index) {
+function renderPlayerMini(player, index, scoreRank, reputationRank) {
   const active = index === game.currentPlayerIndex;
   const statuses = [
     player.disableAllSkillTurns > 0 || player.disableUntilOwnTurn ? `<span class="tag bad">禁用技能</span>` : "",
@@ -5006,19 +5194,44 @@ function renderPlayerMini(player, index) {
     player.storyboard ? '<span class="tag good">故事板</span>' : "",
     player.aiControlled ? '<span class="tag good">AI托管</span>' : (!player.connected ? '<span class="tag bad">掉线</span>' : "")
   ].join("");
-  return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
+  const score = totalScore(player);
+  const reputation = player.reputation ?? 0;
+  const hideRep = isReputationHidden();
+  const isMe = player.memberId === room.myId;
+  const wjcHidesCharacters = globalModifierActive("wjc") && !isMe;
+  const dimsHtml = DIMENSIONS.map(dim => `<span class="mini-dim">${DIMENSION_LABELS[dim].slice(0, 2)}<b>${isDimensionHidden(dim) ? "?" : player.scores[dim]}</b></span>`).join("");
+  const charactersHtml = player.characters?.length
+    ? `<div class="mini-characters">${wjcHidesCharacters
+        ? `<span class="character-chip" title="无法查看">??? × ${player.characters.length}</span>`
+        : player.characters.map(instance => {
+            const character = characterDefinition(instance.id);
+            const stats = characterStats(instance.id);
+            const disabled = instance.disabledTurns > 0 || instance.permanentlyDisabled;
+            return `<span class="character-chip ${disabled ? "bad" : ""}" title="${escapeHtml(character.name)} · 选曲品味 ${stats.selection}${instance.permanentlyDisabled ? " · 永久禁用" : instance.disabledTurns ? ` · 禁用${instance.disabledTurns}回合` : ""}">${escapeHtml(character.name.slice(0, 2))}</span>`;
+          }).join("")}</div>`
+    : "";
+  return `<div class="player-mini ${active ? "active" : ""} ${isMe ? "me" : ""}">
     <div class="player-mini-head"><span class="player-mini-name">${escapeHtml(player.name)}</span>${active ? '<span class="tag good">当前</span>' : ""}${statuses}</div>
-    <div class="mini-dims">${DIMENSIONS.map(dim => `<span class="mini-dim">${DIMENSION_LABELS[dim].slice(0, 2)}<b>${player.scores[dim]}</b></span>`).join("")}</div>
-    ${player.characters?.length ? `<div class="mini-characters">${player.characters.map(instance => {
-      const character = characterDefinition(instance.id);
-      const disabled = instance.disabledTurns > 0 || instance.permanentlyDisabled;
-      return `<span class="character-chip ${disabled ? "bad" : ""}" title="${escapeHtml(character.name)} · 选曲品味 ${character.stats.selection}${instance.permanentlyDisabled ? " · 永久禁用" : instance.disabledTurns ? ` · 禁用${instance.disabledTurns}回合` : ""}">${escapeHtml(character.name.slice(0, 2))}</span>`;
-    }).join("")}</div>` : ""}
+    <div class="mini-rank">
+      <span class="mini-rank-item" title="综合得分">综合 <b>${score}</b> · 第${scoreRank.get(player.memberId)}名</span>
+      ${hideRep ? "" : `<span class="mini-rank-item" title="声望值">声望 <b>${reputation}</b> · 第${reputationRank.get(player.memberId)}名</span>`}
+    </div>
+    <div class="mini-dims">${dimsHtml}</div>
+    ${charactersHtml}
   </div>`;
 }
 
+function scrambleCharacterNames(text) {
+  if (!globalModifierActive("wjc")) return String(text ?? "");
+  let result = String(text ?? "");
+  CHARACTERS.forEach(character => {
+    result = result.split(character.name).join("（乱码）");
+  });
+  return result;
+}
+
 function renderLog(entry) {
-  return `<div class="log-entry ${entry.type}"><span class="log-round">${entry.round ? `R${entry.round}` : "准备"}</span><span class="log-text">${escapeHtml(entry.text)}</span></div>`;
+  return `<div class="log-entry ${entry.type}"><span class="log-round">${entry.round ? `R${entry.round}` : "准备"}</span><span class="log-text">${escapeHtml(scrambleCharacterNames(entry.text))}</span></div>`;
 }
 
 function renderDraft(me) {
@@ -5039,17 +5252,18 @@ function renderShopCard(character, me, active) {
   const price = RARITY[character.rarity].price;
   const owned = me?.characters.some(item => item.id === character.id);
   const affordable = Boolean(active && me && me.funds >= price && !owned);
+  const stats = characterStats(character.id);
   return `<article class="game-card character">
     <div class="card-top"><span class="card-kind">角色</span><span class="rarity">${character.rarity}</span></div>
     <div class="card-glyph">${icon(character.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(character.name)}</div>
     ${character.lore ? `<div class="card-lore">${escapeHtml(character.lore)}</div>` : ""}
-    <div class="character-stats">${CHARACTER_STATS.map(stat => `<div class="character-stat"><span>${CHARACTER_STAT_LABELS[stat]}</span><b>★${character.stats[stat]}</b></div>`).join("")}</div>
+    <div class="character-stats">${CHARACTER_STATS.map(stat => `<div class="character-stat"><span>${CHARACTER_STAT_LABELS[stat]}</span><b>★${stats[stat]}</b></div>`).join("")}</div>
     <div class="card-desc">
       ${character.abilities.map((ability, index) => `<div class="card-effect"><strong>${character.abilities.length > 1 ? `角色技能${index + 1}` : "角色技能"}</strong> ${escapeHtml(ability.description)}</div>`).join("")}
       <div class="card-passive"><strong>被动技能</strong> ${escapeHtml(character.passive)}</div>
     </div>
-    <div class="card-meta">购置 ${price}点 · 选曲品味 ${character.stats.selection}</div>
+    <div class="card-meta">购置 ${price}点 · 选曲品味 ${stats.selection}</div>
     <div class="card-action">${owned
       ? '<div class="owned-mark">已购置</div>'
       : `<button class="btn ${affordable ? "coral" : ""}" data-buy="${character.id}" ${affordable ? "" : "disabled"}>${icon("coins", 14)} ${price}点购置</button>`}</div>
@@ -5475,10 +5689,9 @@ function renderActionModal() {
       return `<button class="target-btn ${selected ? "selected" : ""}" data-effort-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
     }).join("");
     const selectedChar = modal.characters.find(c => c.uid === modal.selectedCharacterUid);
-    const selectedDef = selectedChar ? characterDefinition(selectedChar.id) : null;
     const dimButtons = CHANGEABLE_DIMENSIONS.map(dim => {
       const selected = modal.selectedDimension === dim;
-      const val = selectedDef ? selectedDef.stats[dim] : 0;
+      const val = selectedChar ? (characterStats(selectedChar.id)?.[dim] ?? 0) : 0;
       return `<button class="target-btn ${selected ? "selected" : ""}" ${modal.selectedCharacterUid ? "" : "disabled"} data-effort-dim="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selectedCharacterUid ? `${selected ? "已选" : val}点` : "先选角色"}</span></button>`;
     }).join("");
     const canConfirm = modal.selectedCharacterUid && modal.selectedDimension;
@@ -5536,7 +5749,7 @@ function renderActionModal() {
             const def = characterDefinition(instance.id);
             const selected = modal.selectedCharacterUid === instance.uid;
             const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
-            return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+            return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
           }).join("")
         : '<div class="empty">没有可用的角色牌。</div>');
     const targetButtons = modal.targets.map(target => {
@@ -5561,7 +5774,7 @@ function renderActionModal() {
           const def = characterDefinition(instance.id);
           const selected = modal.selectedCharacterUid === instance.uid;
           const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
-          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
         }).join("");
     const canConfirm = modal.decision === "refuse" || (modal.decision === "accept" && modal.selectedCharacterUid);
     choices = `
@@ -5573,7 +5786,7 @@ function renderActionModal() {
       const def = characterDefinition(instance.id);
       const selected = modal.selectedCharacterUid === instance.uid;
       const status = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : `<span class="tag bad">禁用${instance.disabledTurns}回合</span>`;
-      return `<button class="target-btn ${selected ? "selected" : ""}" data-restore-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${status}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-restore-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${status}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
     }).join("");
     choices = `
       <div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${characterButtons}</div></div>
@@ -5809,6 +6022,7 @@ function renderSettlement() {
   const winners = ranking.filter(item => item.score === topScore).map(item => item.name);
   app.innerHTML = `
     ${topbar("结算", `<span class="state-pill">SETTLEMENT</span>`)}
+    ${renderGlobalModifierBanner()}
     <div class="settlement">
       <div class="winner"><div class="winner-label">${winners.length > 1 ? "并列冠军" : "冠军"}</div><div class="winner-name">${escapeHtml(winners.join("、"))}</div></div>
       <div class="ranking">${ranking.map((item, index) => `<div class="rank-row">
@@ -5914,11 +6128,14 @@ function renderRulesModal() {
     </ol>
     <h4>事件牌</h4>
     <div class="modal-desc">${EVENT_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
+    <h4>全局状态（可选玩法）</h4>
+    <div class="modal-desc">${GLOBAL_MODIFIERS.map(modifier => `<p><strong>${escapeHtml(modifier.name)}</strong>：${escapeHtml(modifier.description)}</p>`).join("")}</div>
     <h4>技能牌</h4>
     <div class="modal-desc">${SKILL_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
   </div></div>`);
   document.getElementById("close-rules").onclick = () => { ui.rulesOpen = false; render(); };
 }
+
 
 "use strict";
 
@@ -5994,7 +6211,7 @@ const room = {
   hostId: "",
   isHost: false,
   lifecycle: ROOM_STATE.WAITING,
-  settings: { totalRounds: 10, botDifficulty: "simple" },
+  settings: { totalRounds: 10, botDifficulty: "simple", globalStateEnabled: false },
   members: [],
   transport: null
 };
@@ -6259,6 +6476,7 @@ class PeerTransport {
     this.hostConnection = null;
   }
 }
+
 </script>
 </body>
 </html>

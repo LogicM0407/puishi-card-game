@@ -621,6 +621,9 @@ function handleRoomAction(memberId, action, payload) {
       room.settings.totalRounds = rounds;
       broadcastLobby();
     }
+  } else if (action === "UPDATE_GLOBAL_STATE" && memberId === room.hostId && room.lifecycle === ROOM_STATE.WAITING) {
+    room.settings.globalStateEnabled = Boolean(payload.enabled);
+    broadcastLobby();
   } else if (action === "START" && memberId === room.hostId) {
     startGame();
   } else if (action === "BACK_TO_LOBBY" && memberId === room.hostId && room.lifecycle === ROOM_STATE.SETTLEMENT) {
@@ -760,7 +763,7 @@ async function createRoom(name) {
     room.hostId = room.myId;
     room.isHost = true;
     room.lifecycle = ROOM_STATE.WAITING;
-    room.settings = { totalRounds: 10 };
+    room.settings = { totalRounds: 10, globalStateEnabled: false };
     saveRoomSession(code, name);
     room.members = [{
       id: room.myId,

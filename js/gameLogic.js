@@ -36,9 +36,26 @@ function isSpectator() {
   return Boolean(myMember()?.spectator || (game && !myGamePlayer()));
 }
 
+function characterStats(characterId) {
+  const def = characterDefinition(characterId);
+  if (!def) return null;
+  if (game?.globalModifier === "wakeup" && game.adjustedCharacterStats?.[characterId]) {
+    return game.adjustedCharacterStats[characterId];
+  }
+  return def.stats;
+}
+
+function globalModifierActive(id) {
+  return game?.globalModifier === id;
+}
+
 function createDeck() {
   const connectedCount = roomPlayers().filter(member => member.connected).length;
-  const events = EVENT_CARDS.filter(card => card.id !== "tribunal" || connectedCount >= 4);
+  const events = EVENT_CARDS.filter(card => {
+    if (card.id === "tribunal" && connectedCount < 4) return false;
+    if (globalModifierActive("loyalty") && (card.id === "retire" || card.id === "rpe")) return false;
+    return true;
+  });
   // 稀有事件牌权重为普通事件牌的 1/5：普通事件 5 份，稀有事件 1 份。
   // 舞萌/中二/音击需要多步交互，概率过高会频繁打断流程，同样按 1 份处理。
   const lowFrequencyEvents = new Set(["maimai", "chunithm", "ongeki"]);
@@ -105,12 +122,29 @@ function resolveStarMitigation(memberId, accept) {
   return ok();
 }
 
-function createGameState(members, totalRounds) {
+function createGameState(members, totalRounds, globalModifier = null) {
   const activeMembers = members.filter(member => !member.spectator && member.connected);
   const orderedMembers = shuffle([...activeMembers]);
+  const initialFunds = globalModifier === "cooperation" ? 15 : globalModifier === "restraint" ? 10 : 12;
+  const initialReputation = globalModifier === "pure" ? 0 : 50;
+  const adjustedCharacterStats = {};
+  if (globalModifier === "wakeup") {
+    CHARACTERS.forEach(character => {
+      const multiplier = GLOBAL_WAKEUP_MULTIPLIERS[character.rarity] ?? 1;
+      const stats = {};
+      CHARACTER_STATS.forEach(stat => {
+        stats[stat] = Math.ceil(character.stats[stat] * multiplier);
+      });
+      adjustedCharacterStats[character.id] = stats;
+    });
+  }
   return {
     phase: GAME_PHASE.DRAFT,
     totalRounds,
+    globalModifier,
+    adjustedCharacterStats,
+    twoZeroDisabled: false,
+    rouletteFinalRound: null,
     round: 0,
     currentPlayerIndex: 0,
     draftDone: [],
@@ -130,9 +164,9 @@ function createGameState(members, totalRounds) {
       handCount: 0,
       handLimit: 5,
       characters: [],
-      funds: 12,
+      funds: initialFunds,
       scores: { selection: 0, config: 0, abstract: 0, concrete: 0, innovation: 0 },
-      reputation: 50,
+      reputation: initialReputation,
       disableCharacterTurns: 0,
       disableAllSkillTurns: 0,
       disableUntilOwnTurn: false,
@@ -204,6 +238,15 @@ function characterSelection(character) {
 function gainReputation(playerIndex, amount, options = {}) {
   const player = game.players[playerIndex];
   if (!player || player.frozen || !amount) return 0;
+  if (globalModifierActive("pure")) {
+    const dimension = randomDimension(true);
+    applyScoreChange(playerIndex, dimension, amount, {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true
+    });
+    appendLog(`${player.name} 的声望变化转为${DIMENSION_LABELS[dimension]}${amount > 0 ? "+" : ""}${amount}。`, "effect");
+    return amount;
+  }
   const before = player.reputation;
   if (options.cap != null && amount > 0) {
     player.reputation = player.reputation >= options.cap
@@ -222,7 +265,7 @@ function skillCardPointMultiplier(player) {
 function handLimitOf(player) {
   if (!player || !player.characters.length) return 5;
   const totalStamina = player.characters.reduce((sum, character) => {
-    return sum + (characterDefinition(character.id)?.stats.stamina || 0);
+    return sum + (characterStats(character.id)?.stamina || 0);
   }, 0);
   return Math.ceil(totalStamina / player.characters.length + 5);
 }
@@ -309,6 +352,9 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
     if (source && source.memberId !== player.memberId) source.disableUntilOwnTurn = true;
     appendLog(`${player.name} 的配置水平减少被“地道东京爷”免疫。`, "effect");
     return 0;
+  }
+  if (amount > 0 && globalModifierActive("two-zero") && !game.twoZeroDisabled) {
+    amount += 1;
   }
   if (!amount) return 0;
 
@@ -515,7 +561,7 @@ function resolveEvent(playerIndex, card) {
         .map(instance => ({
           instance,
           definition: characterDefinition(instance.id),
-          value: CHARACTER_STATS.reduce((sum, stat) => sum + characterDefinition(instance.id).stats[stat], 0)
+          value: CHARACTER_STATS.reduce((sum, stat) => sum + characterStats(instance.id)[stat], 0)
         }))
         .sort((a, b) => b.value - a.value || a.definition.name.localeCompare(b.definition.name, "zh-CN"))[0].instance;
       strongest.permanentlyDisabled = true;
@@ -584,6 +630,7 @@ function resolveEvent(playerIndex, card) {
       }
     }
   } else if (event.id === "rpe") {
+    if (globalModifierActive("two-zero")) game.twoZeroDisabled = true;
     game.players.forEach((target, targetIndex) => {
       const hasPeCharacter = target.characters.some(character => characterDefinition(character.id)?.isPE);
       if (hasPeCharacter) {
@@ -620,7 +667,7 @@ function resolveEvent(playerIndex, card) {
   } else if (event.id === "chart-missing") {
     const hasLowStamina = player.characters.some(instance => {
       const def = characterDefinition(instance.id);
-      const stamina = def ? def.stats.stamina + (instance.staminaBonus || 0) : 0;
+      const stamina = characterStats(instance.id)?.stamina + (instance.staminaBonus || 0);
       return def && stamina <= 5;
     });
     if (!hasLowStamina) {
@@ -916,9 +963,9 @@ function buyCharacter(playerIndex, characterId) {
     recruited: false
   });
   // 将角色的选曲品味加到玩家得分中
-  player.scores.selection += character.stats.selection;
+  player.scores.selection += characterStats(characterId).selection;
   recomputeHandLimit(player);
-  appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${character.stats.selection}），剩余${player.funds}点。`, "effect");
+  appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${characterStats(characterId).selection}），剩余${player.funds}点。`, "effect");
   return ok();
 }
 
@@ -959,7 +1006,8 @@ function canActivateCharacter(player, instance, ability) {
   if (player.silenced) return fail("静默状态不可发动角色技能");
   if (instance.permanentlyDisabled) return fail("该角色技能已永久失效");
   const useKey = `${instance.uid}:${ability.id}`;
-  if (game.turn.usedAbilityIds.includes(useKey)) return fail("该技能本回合已经发动过");
+  const repeatReady = globalModifierActive("repeat") && Boolean(instance.repeatAvailable?.[ability.id]);
+  if (game.turn.usedAbilityIds.includes(useKey) && !repeatReady) return fail("该技能本回合已经发动过");
   const firstRound = game.round === 1;
   if (firstRound && player.firstRoundSkillUsed) return fail("第1轮只能发动1次角色技能");
   if (!firstRound && (player.disableCharacterTurns > 0 || isAllSkillBlocked(player) || instance.disabledTurns > 0)) {
@@ -1001,8 +1049,9 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
 
   if (game.round === 1) {
+    const baseStats = characterStats(characterId);
     DIMENSIONS.forEach(dimension => {
-      player.scores[dimension] = definition.stats[dimension];
+      player.scores[dimension] = baseStats[dimension];
     });
     player.firstRoundSkillUsed = true;
     appendLog(`${player.name} 以「${definition.name}」确定谱面全部五维初始分数。`, "effect");
@@ -1179,9 +1228,20 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
+  const wasFirstActivation = instance.uses[ability.id] === 0;
   instance.cooldowns[ability.id] = actualCooldown;
   instance.uses[ability.id]++;
   game.turn.usedAbilityIds.push(`${instance.uid}:${ability.id}`);
+  if (globalModifierActive("repeat")) {
+    if (wasFirstActivation) {
+      instance.repeatAvailable = instance.repeatAvailable || {};
+      instance.repeatAvailable[ability.id] = true;
+      instance.cooldowns[ability.id] = 0;
+      appendLog(`${player.name} 触发「复读」：${definition.name}的技能可立即再发动一次。`, "effect");
+    } else if (instance.repeatAvailable?.[ability.id]) {
+      instance.repeatAvailable[ability.id] = false;
+    }
+  }
   return ok();
 }
 
@@ -1273,7 +1333,7 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     const dim = payload.dimension && CHANGEABLE_DIMENSIONS.includes(payload.dimension) ? payload.dimension : null;
     if (!dim) return fail("请选择一项属性");
     const def = characterDefinition(ownChar.id);
-    const amount = def.stats[dim] || 0;
+    const amount = characterStats(ownChar.id)?.[dim] || 0;
     applyScoreChange(playerIndex, dim, amount, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「发力」：将${def.name}的${DIMENSION_LABELS[dim]}${amount}点加到自身。`, "effect");
   } else if (definition.id === "consult") {
@@ -1344,7 +1404,8 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     }
     if (!chosen) return fail("请选择要参考的角色");
     const chosenDef = characterDefinition(chosen.id);
-    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => chosenDef.stats[d] > chosenDef.stats[best] ? d : best, "config");
+    const chosenStats = characterStats(chosen.id);
+    const dim = CHANGEABLE_DIMENSIONS.reduce((best, d) => chosenStats[d] > chosenStats[best] ? d : best, "config");
     applyScoreChange(playerIndex, dim, 5 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     appendLog(`${player.name} 打出「写合作谱」：参考${chosenOwnerName}的${chosenDef.name}（${DIMENSION_LABELS[dim]}）+5。`, "effect");
   } else if (definition.id === "observe") {
@@ -1692,6 +1753,18 @@ function endTurn(playerIndex) {
     player.pendingDisableCharacterTurns = 0;
   }
 
+  // 存货积压：从第4轮起，回合结束时手牌>0则随机维度扣除当前手牌数
+  if (globalModifierActive("stockpile") && game.round >= 4 && player.hand.length > 0) {
+    const penalty = player.hand.length;
+    const dimension = randomDimension(true);
+    applyScoreChange(playerIndex, dimension, -penalty, {
+      sourcePlayerIndex: playerIndex,
+      allowSelectionChange: true,
+      skipStarPending: true
+    });
+    appendLog(`「存货积压」：${player.name} 回合结束，手牌${penalty}张，${DIMENSION_LABELS[dimension]}-${penalty}。`, "event");
+  }
+
   if (
     player.extraTurnCredits > 0 &&
     player.extraTurnEligibleAfter != null &&
@@ -1717,9 +1790,20 @@ function endTurn(playerIndex) {
     if (game.currentPlayerIndex >= game.players.length) {
       game.currentPlayerIndex = 0;
       game.round++;
-      if (game.round > game.totalRounds) {
+      const shouldSettle = globalModifierActive("roulette")
+        ? (game.round > game.totalRounds * 2) ||
+          (game.rouletteFinalRound != null && game.round > game.rouletteFinalRound)
+        : game.round > game.totalRounds;
+      if (shouldSettle) {
         settleGame();
         return ok();
+      }
+      if (globalModifierActive("roulette") && game.rouletteFinalRound == null) {
+        const roll = 1 + Math.floor(Math.random() * game.totalRounds);
+        if (roll === game.totalRounds) {
+          game.rouletteFinalRound = game.round;
+          appendLog(`「俄罗斯轮盘」：第${game.round}轮被随机决定为最终轮。`, "event");
+        }
       }
       appendLog(`第${game.round}轮开始。`, "event");
     }
@@ -1811,7 +1895,13 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
     if (game.turn.hasDrawn) return fail("本回合已经摸过牌");
     if (player.hand.length >= (player.handLimit ?? 5)) return fail("手牌已满，请先使用或弃牌");
     game.turn.hasDrawn = true;
-    result = ok({ draw: drawCard(playerIndex) });
+    if (globalModifierActive("stockpile")) {
+      const count = Math.min(3, Math.max(0, (player.handLimit ?? 5) - player.hand.length));
+      const results = drawCards(playerIndex, count);
+      result = ok({ draw: { kind: "multiple", count, results } });
+    } else {
+      result = ok({ draw: drawCard(playerIndex) });
+    }
   } else if (action === "PLAY_CARD") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合使用技能牌");
     result = executeSkillCard(playerIndex, payload.cardUid, payload);
@@ -1923,8 +2013,10 @@ function botCharacterChoice(playerIndex) {
     selection: ["selection", "config"]
   }[player.aiStrategy] || ["config", "innovation"];
   return affordable.sort((a, b) => {
-    const scoreA = strategyStats.reduce((sum, stat) => sum + a.stats[stat], 0);
-    const scoreB = strategyStats.reduce((sum, stat) => sum + b.stats[stat], 0);
+    const statsA = characterStats(a.id);
+    const statsB = characterStats(b.id);
+    const scoreA = strategyStats.reduce((sum, stat) => sum + statsA[stat], 0);
+    const scoreB = strategyStats.reduce((sum, stat) => sum + statsB[stat], 0);
     return scoreB - scoreA || RARITY[b.rarity].price - RARITY[a.rarity].price;
   })[0];
 }
@@ -2292,10 +2384,15 @@ function startGame() {
   const players = roomPlayers().filter(member => member.connected);
   if (room.lifecycle !== ROOM_STATE.WAITING) return;
   if (players.length < 2) return showToast("至少需要2名玩家");
-  game = createGameState(players, room.settings.totalRounds);
+  const globalModifier = room.settings.globalStateEnabled ? randomItem(GLOBAL_MODIFIERS).id : null;
+  game = createGameState(players, room.settings.totalRounds, globalModifier);
   processedGameActions.clear();
   room.lifecycle = ROOM_STATE.PLAYING;
-  appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有12点购置点数。`, "event");
+  appendLog(`游戏开始，共${game.totalRounds}轮。每位玩家拥有${game.players[0]?.funds ?? 12}点购置点数。`, "event");
+  if (globalModifier) {
+    const modifier = globalModifierDefinition(globalModifier);
+    appendLog(`全局状态生效：【${modifier.name}】${modifier.description}`, "event");
+  }
   pushSystemChat("游戏已开始，祝大家好运！");
   commitGameState("SYNC", "system", "", null);
 }

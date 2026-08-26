@@ -1,7 +1,12 @@
 "use strict";
 
-const VERSION = "v2.2.2";
+const VERSION = "v2.3.0";
 const CHANGELOG = Object.freeze([
+  { version: "v2.3.0", items: [
+    "新增：全局状态玩法——房主可在大厅勾选「启用全局状态」，开局时随机抽取一种状态并整局生效",
+    "新增：12种全局状态（大合作/大节制/至死不渝/复读/缄默症候群/藏锋/WJC/一觉醒来/2.0时代/存货积压/俄罗斯轮盘/唯有纯粹）",
+    "新增：游戏主界面顶部常驻显示当前全局状态名称与简短描述"
+  ]},
   { version: "v2.2.2", items: [
     "新增：手牌上限系统（上限 = ceil(所有角色爆肝程度均值 + 5)，随角色购置动态更新）",
     "新增：初始手牌按 min(5, 手牌上限) 发放；摸牌按钮在手牌满时禁用",
@@ -578,6 +583,30 @@ const EVENT_CARDS = Object.freeze([
     description: "【稀有牌】仅当你的≥2名角色爆肝程度≤7时可触发：弃置你的所有手牌。不满足条件时不产生效果。"
   }
 ]);
+
+const GLOBAL_MODIFIERS = Object.freeze([
+  { id: "cooperation", name: "大合作时代", description: "初始购置点数由12点增加至15点。" },
+  { id: "restraint", name: "大节制时代", description: "初始购置点数由12点降低至10点。" },
+  { id: "loyalty", name: "至死不渝", description: "事件牌【退坑】与【崩所有人RPE】将从牌堆中永久移除。" },
+  { id: "repeat", name: "复读", description: "每张角色卡的每个技能首次发动后，可立即再发动一次（仅限当前回合）。" },
+  { id: "silence", name: "缄默症候群", description: "所有玩家的声望值与声望排名不可见，实际数值仍参与结算。" },
+  { id: "hidden", name: "藏锋", description: "所有人的配置/具象/抽象三项分数不可见，实际数值仍参与结算。" },
+  { id: "wjc", name: "WJC", description: "无法看到其他玩家拥有的谱师牌；日志中他人角色名显示为乱码。" },
+  { id: "wakeup", name: "一觉醒来", description: "角色卡六维按稀有度调整：S级-50%、A+级-25%、A与B+不变、B级+25%、C级+50%（向上取整）。" },
+  { id: "two-zero", name: "2.0时代", description: "任意维度提升时额外+1；触发【崩所有人RPE】后此效果永久消失。" },
+  { id: "stockpile", name: "存货积压", description: "正常摸牌改为3张；第4轮起回合结束时手牌>0则随机维度扣当前手牌数。" },
+  { id: "roulette", name: "俄罗斯轮盘", description: "每轮开始时随机决定是否为本局最终轮；进行轮数≥设定总回合×2时强制结束。" },
+  { id: "pure", name: "唯有纯粹", description: "声望固定为0且不显示；所有声望增减改为随机维度同数值增减。" }
+]);
+
+const GLOBAL_WAKEUP_MULTIPLIERS = Object.freeze({
+  S: 0.5,
+  "A+": 0.75,
+  A: 1,
+  "B+": 1,
+  B: 1.25,
+  C: 1.5
+});
 
 const ROOM_STORAGE_KEY = "puishi-card-last-room-v1";
 

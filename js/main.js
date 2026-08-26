@@ -72,7 +72,7 @@ const room = {
   hostId: "",
   isHost: false,
   lifecycle: ROOM_STATE.WAITING,
-  settings: { totalRounds: 10, botDifficulty: "simple" },
+  settings: { totalRounds: 10, botDifficulty: "simple", globalStateEnabled: false },
   members: [],
   transport: null
 };

@@ -42,6 +42,10 @@ function eventDefinition(id) {
   return EVENT_CARDS.find(card => card.id === id);
 }
 
+function globalModifierDefinition(id) {
+  return GLOBAL_MODIFIERS.find(modifier => modifier.id === id);
+}
+
 function randomItem(items) {
   return items[Math.floor(Math.random() * items.length)];
 }

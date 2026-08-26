@@ -227,6 +227,10 @@ function renderLobby() {
             <div class="setting-label">初始购置点数<span>购置角色后进入第1轮</span></div>
             <strong>12</strong>
           </div>
+          <div class="setting-row">
+            <div class="setting-label">启用全局状态<span>开局时随机一种全局状态，整局生效（可选玩法）</span></div>
+            <label class="checkbox-label"><input type="checkbox" id="global-state-toggle" ${room.settings.globalStateEnabled ? "checked" : ""} ${room.isHost ? "" : "disabled"}> 启用</label>
+          </div>
         </section>
         <div class="notice">房间人数大于1人即可开始。游戏开始后新成员只能观战。</div>
         ${room.isHost && room.lifecycle === ROOM_STATE.WAITING ? `
@@ -255,6 +259,9 @@ function renderLobby() {
       const rounds = Number(event.target.value);
       if (Number.isSafeInteger(rounds) && rounds > 0) sendRoomAction("UPDATE_ROUNDS", { totalRounds: rounds });
       else render();
+    };
+    document.getElementById("global-state-toggle").onchange = event => {
+      sendRoomAction("UPDATE_GLOBAL_STATE", { enabled: event.target.checked });
     };
     document.getElementById("add-bot-simple")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "simple" }));
     document.getElementById("add-bot-normal")?.addEventListener("click", () => sendRoomAction("ADD_BOT", { difficulty: "normal" }));
@@ -286,20 +293,46 @@ function renderMemberRow(member) {
   </div>`;
 }
 
+function computeRankMap(players, scoreFn) {
+  const map = new Map();
+  players.forEach(player => {
+    const better = players.filter(other => scoreFn(other) > scoreFn(player)).length;
+    map.set(player.memberId, better + 1);
+  });
+  return map;
+}
+
+function isReputationHidden() {
+  return globalModifierActive("silence") || globalModifierActive("pure");
+}
+
+function isDimensionHidden(dim) {
+  return globalModifierActive("hidden") && (dim === "config" || dim === "abstract" || dim === "concrete");
+}
+
+function renderGlobalModifierBanner() {
+  const modifier = globalModifierDefinition(game?.globalModifier);
+  if (!modifier) return "";
+  return `<div class="global-modifier-banner">${icon("zap", 15)} <strong>全局状态：${escapeHtml(modifier.name)}</strong><span>${escapeHtml(modifier.description)}</span></div>`;
+}
+
 function renderGame() {
   const me = myGamePlayer();
   const current = currentPlayer();
   const draft = game.phase === GAME_PHASE.DRAFT;
   const phaseLabel = draft ? "购置阶段" : `第${game.round}/${game.totalRounds}轮`;
+  const scoreRank = computeRankMap(game.players, totalScore);
+  const reputationRank = computeRankMap(game.players, player => player.reputation ?? 0);
   app.innerHTML = `
     ${topbar("谱师卡牌", `<span class="state-pill">${phaseLabel}</span>
       <div class="turn-line">当前：<strong>${escapeHtml(current?.name || "")}</strong>${draft ? "购置角色" : "进行回合"}</div>`)}
+    ${renderGlobalModifierBanner()}
     ${isSpectator() ? `<div class="spectator-banner">${icon("eye", 15)} 观战模式：你可以查看公开数据，但不能查看手牌或执行操作。</div>` : ""}
     <div class="game-layout">
       <aside class="side-column">
         <section class="section">
           <div class="section-head"><h2>玩家</h2><span class="section-note">${game.players.length}人</span></div>
-          ${game.players.map((player, index) => renderPlayerMini(player, index)).join("")}
+          ${game.players.map((player, index) => renderPlayerMini(player, index, scoreRank, reputationRank)).join("")}
         </section>
         <section class="section">
           <div class="section-head"><h2>操作记录</h2></div>
@@ -319,14 +352,14 @@ function renderGame() {
 function renderDimensionPanel(player) {
   if (!player) return "";
   return `<div class="dimension-panel">
-    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]} · ${SCORE_WEIGHTS[dim] * 100}%</div><div class="dimension-value">${formatNumber(player.scores[dim])}</div></div>`).join("")}
-    <div class="dimension reputation"><div class="dimension-label">声望 / 总分</div><div class="dimension-value">${player.reputation} <span class="dimension-total">· ${totalScore(player)}</span></div></div>
+    ${DIMENSIONS.map(dim => `<div class="dimension"><div class="dimension-label">${DIMENSION_LABELS[dim]} · ${SCORE_WEIGHTS[dim] * 100}%</div><div class="dimension-value">${isDimensionHidden(dim) ? "?" : formatNumber(player.scores[dim])}</div></div>`).join("")}
+    <div class="dimension reputation"><div class="dimension-label">声望 / 总分</div><div class="dimension-value">${isReputationHidden() ? "?" : player.reputation} <span class="dimension-total">· ${totalScore(player)}</span></div></div>
   </div>`;
 }
 
 
 
-function renderPlayerMini(player, index) {
+function renderPlayerMini(player, index, scoreRank, reputationRank) {
   const active = index === game.currentPlayerIndex;
   const statuses = [
     player.disableAllSkillTurns > 0 || player.disableUntilOwnTurn ? `<span class="tag bad">禁用技能</span>` : "",
@@ -336,19 +369,44 @@ function renderPlayerMini(player, index) {
     player.storyboard ? '<span class="tag good">故事板</span>' : "",
     player.aiControlled ? '<span class="tag good">AI托管</span>' : (!player.connected ? '<span class="tag bad">掉线</span>' : "")
   ].join("");
-  return `<div class="player-mini ${active ? "active" : ""} ${player.memberId === room.myId ? "me" : ""}">
+  const score = totalScore(player);
+  const reputation = player.reputation ?? 0;
+  const hideRep = isReputationHidden();
+  const isMe = player.memberId === room.myId;
+  const wjcHidesCharacters = globalModifierActive("wjc") && !isMe;
+  const dimsHtml = DIMENSIONS.map(dim => `<span class="mini-dim">${DIMENSION_LABELS[dim].slice(0, 2)}<b>${isDimensionHidden(dim) ? "?" : player.scores[dim]}</b></span>`).join("");
+  const charactersHtml = player.characters?.length
+    ? `<div class="mini-characters">${wjcHidesCharacters
+        ? `<span class="character-chip" title="无法查看">??? × ${player.characters.length}</span>`
+        : player.characters.map(instance => {
+            const character = characterDefinition(instance.id);
+            const stats = characterStats(instance.id);
+            const disabled = instance.disabledTurns > 0 || instance.permanentlyDisabled;
+            return `<span class="character-chip ${disabled ? "bad" : ""}" title="${escapeHtml(character.name)} · 选曲品味 ${stats.selection}${instance.permanentlyDisabled ? " · 永久禁用" : instance.disabledTurns ? ` · 禁用${instance.disabledTurns}回合` : ""}">${escapeHtml(character.name.slice(0, 2))}</span>`;
+          }).join("")}</div>`
+    : "";
+  return `<div class="player-mini ${active ? "active" : ""} ${isMe ? "me" : ""}">
     <div class="player-mini-head"><span class="player-mini-name">${escapeHtml(player.name)}</span>${active ? '<span class="tag good">当前</span>' : ""}${statuses}</div>
-    <div class="mini-dims">${DIMENSIONS.map(dim => `<span class="mini-dim">${DIMENSION_LABELS[dim].slice(0, 2)}<b>${player.scores[dim]}</b></span>`).join("")}</div>
-    ${player.characters?.length ? `<div class="mini-characters">${player.characters.map(instance => {
-      const character = characterDefinition(instance.id);
-      const disabled = instance.disabledTurns > 0 || instance.permanentlyDisabled;
-      return `<span class="character-chip ${disabled ? "bad" : ""}" title="${escapeHtml(character.name)} · 选曲品味 ${character.stats.selection}${instance.permanentlyDisabled ? " · 永久禁用" : instance.disabledTurns ? ` · 禁用${instance.disabledTurns}回合` : ""}">${escapeHtml(character.name.slice(0, 2))}</span>`;
-    }).join("")}</div>` : ""}
+    <div class="mini-rank">
+      <span class="mini-rank-item" title="综合得分">综合 <b>${score}</b> · 第${scoreRank.get(player.memberId)}名</span>
+      ${hideRep ? "" : `<span class="mini-rank-item" title="声望值">声望 <b>${reputation}</b> · 第${reputationRank.get(player.memberId)}名</span>`}
+    </div>
+    <div class="mini-dims">${dimsHtml}</div>
+    ${charactersHtml}
   </div>`;
 }
 
+function scrambleCharacterNames(text) {
+  if (!globalModifierActive("wjc")) return String(text ?? "");
+  let result = String(text ?? "");
+  CHARACTERS.forEach(character => {
+    result = result.split(character.name).join("（乱码）");
+  });
+  return result;
+}
+
 function renderLog(entry) {
-  return `<div class="log-entry ${entry.type}"><span class="log-round">${entry.round ? `R${entry.round}` : "准备"}</span><span class="log-text">${escapeHtml(entry.text)}</span></div>`;
+  return `<div class="log-entry ${entry.type}"><span class="log-round">${entry.round ? `R${entry.round}` : "准备"}</span><span class="log-text">${escapeHtml(scrambleCharacterNames(entry.text))}</span></div>`;
 }
 
 function renderDraft(me) {
@@ -369,17 +427,18 @@ function renderShopCard(character, me, active) {
   const price = RARITY[character.rarity].price;
   const owned = me?.characters.some(item => item.id === character.id);
   const affordable = Boolean(active && me && me.funds >= price && !owned);
+  const stats = characterStats(character.id);
   return `<article class="game-card character">
     <div class="card-top"><span class="card-kind">角色</span><span class="rarity">${character.rarity}</span></div>
     <div class="card-glyph">${icon(character.glyph, 28)}</div>
     <div class="card-name">${escapeHtml(character.name)}</div>
     ${character.lore ? `<div class="card-lore">${escapeHtml(character.lore)}</div>` : ""}
-    <div class="character-stats">${CHARACTER_STATS.map(stat => `<div class="character-stat"><span>${CHARACTER_STAT_LABELS[stat]}</span><b>★${character.stats[stat]}</b></div>`).join("")}</div>
+    <div class="character-stats">${CHARACTER_STATS.map(stat => `<div class="character-stat"><span>${CHARACTER_STAT_LABELS[stat]}</span><b>★${stats[stat]}</b></div>`).join("")}</div>
     <div class="card-desc">
       ${character.abilities.map((ability, index) => `<div class="card-effect"><strong>${character.abilities.length > 1 ? `角色技能${index + 1}` : "角色技能"}</strong> ${escapeHtml(ability.description)}</div>`).join("")}
       <div class="card-passive"><strong>被动技能</strong> ${escapeHtml(character.passive)}</div>
     </div>
-    <div class="card-meta">购置 ${price}点 · 选曲品味 ${character.stats.selection}</div>
+    <div class="card-meta">购置 ${price}点 · 选曲品味 ${stats.selection}</div>
     <div class="card-action">${owned
       ? '<div class="owned-mark">已购置</div>'
       : `<button class="btn ${affordable ? "coral" : ""}" data-buy="${character.id}" ${affordable ? "" : "disabled"}>${icon("coins", 14)} ${price}点购置</button>`}</div>
@@ -805,10 +864,9 @@ function renderActionModal() {
       return `<button class="target-btn ${selected ? "selected" : ""}" data-effort-char="${instance.uid}"><span>${escapeHtml(def.name)}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
     }).join("");
     const selectedChar = modal.characters.find(c => c.uid === modal.selectedCharacterUid);
-    const selectedDef = selectedChar ? characterDefinition(selectedChar.id) : null;
     const dimButtons = CHANGEABLE_DIMENSIONS.map(dim => {
       const selected = modal.selectedDimension === dim;
-      const val = selectedDef ? selectedDef.stats[dim] : 0;
+      const val = selectedChar ? (characterStats(selectedChar.id)?.[dim] ?? 0) : 0;
       return `<button class="target-btn ${selected ? "selected" : ""}" ${modal.selectedCharacterUid ? "" : "disabled"} data-effort-dim="${dim}"><span>${DIMENSION_LABELS[dim]}</span><span class="target-score">${modal.selectedCharacterUid ? `${selected ? "已选" : val}点` : "先选角色"}</span></button>`;
     }).join("");
     const canConfirm = modal.selectedCharacterUid && modal.selectedDimension;
@@ -866,7 +924,7 @@ function renderActionModal() {
             const def = characterDefinition(instance.id);
             const selected = modal.selectedCharacterUid === instance.uid;
             const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
-            return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+            return `<button class="target-btn ${selected ? "selected" : ""}" data-event-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
           }).join("")
         : '<div class="empty">没有可用的角色牌。</div>');
     const targetButtons = modal.targets.map(target => {
@@ -891,7 +949,7 @@ function renderActionModal() {
           const def = characterDefinition(instance.id);
           const selected = modal.selectedCharacterUid === instance.uid;
           const disabledTag = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : instance.disabledTurns > 0 ? `<span class="tag bad">禁用${instance.disabledTurns}回合</span>` : "";
-          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+          return `<button class="target-btn ${selected ? "selected" : ""}" data-event-resp-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${disabledTag}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
         }).join("");
     const canConfirm = modal.decision === "refuse" || (modal.decision === "accept" && modal.selectedCharacterUid);
     choices = `
@@ -903,7 +961,7 @@ function renderActionModal() {
       const def = characterDefinition(instance.id);
       const selected = modal.selectedCharacterUid === instance.uid;
       const status = instance.permanentlyDisabled ? '<span class="tag bad">永久失效</span>' : `<span class="tag bad">禁用${instance.disabledTurns}回合</span>`;
-      return `<button class="target-btn ${selected ? "selected" : ""}" data-restore-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${def.stats.selection}） ${status}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
+      return `<button class="target-btn ${selected ? "selected" : ""}" data-restore-character="${instance.uid}"><span>${escapeHtml(def.name)}（选曲品味 ${characterStats(instance.id).selection}） ${status}</span><span class="target-score">${selected ? "已选" : "选择"}</span></button>`;
     }).join("");
     choices = `
       <div class="event-step"><div class="event-step-title">选择要恢复的角色</div><div class="target-list">${characterButtons}</div></div>
@@ -1139,6 +1197,7 @@ function renderSettlement() {
   const winners = ranking.filter(item => item.score === topScore).map(item => item.name);
   app.innerHTML = `
     ${topbar("结算", `<span class="state-pill">SETTLEMENT</span>`)}
+    ${renderGlobalModifierBanner()}
     <div class="settlement">
       <div class="winner"><div class="winner-label">${winners.length > 1 ? "并列冠军" : "冠军"}</div><div class="winner-name">${escapeHtml(winners.join("、"))}</div></div>
       <div class="ranking">${ranking.map((item, index) => `<div class="rank-row">
@@ -1244,6 +1303,8 @@ function renderRulesModal() {
     </ol>
     <h4>事件牌</h4>
     <div class="modal-desc">${EVENT_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
+    <h4>全局状态（可选玩法）</h4>
+    <div class="modal-desc">${GLOBAL_MODIFIERS.map(modifier => `<p><strong>${escapeHtml(modifier.name)}</strong>：${escapeHtml(modifier.description)}</p>`).join("")}</div>
     <h4>技能牌</h4>
     <div class="modal-desc">${SKILL_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
   </div></div>`);
