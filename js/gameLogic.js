@@ -128,6 +128,7 @@ function createGameState(members, totalRounds) {
       aiStrategy: member.aiStrategy || randomItem(["config", "motion", "innovation", "selection"]),
       hand: [],
       handCount: 0,
+      handLimit: 5,
       characters: [],
       funds: 12,
       scores: { selection: 0, config: 0, abstract: 0, concrete: 0, innovation: 0 },
@@ -215,6 +216,35 @@ function gainReputation(playerIndex, amount, options = {}) {
 
 function skillCardPointMultiplier(player) {
   return 1 + (player?.retiredCharacterCount || 0) * .5;
+}
+
+function handLimitOf(player) {
+  if (!player || !player.characters.length) return 5;
+  const totalStamina = player.characters.reduce((sum, character) => {
+    return sum + (characterDefinition(character.id)?.stats.stamina || 0);
+  }, 0);
+  return Math.ceil(totalStamina / player.characters.length + 5);
+}
+
+function recomputeHandLimit(player) {
+  const limit = handLimitOf(player);
+  player.handLimit = limit;
+  return limit;
+}
+
+function discardCard(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  if (!player) return fail("玩家不存在");
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return fail("手牌不存在");
+  const [card] = player.hand.splice(idx, 1);
+  game.discard.push(card);
+  player.handCount = player.hand.length;
+  const name = skillDefinition(card.cardId)?.name || "牌";
+  game.turn.playableCards = Math.max(0, (game.turn.playableCards ?? player.handLimit) - 1);
+  handleNonPlayCardLoss(playerIndex, 1);
+  appendLog(`${player.name} 主动弃置了「${name}」，本回合可打出的牌数-1。`, "effect");
+  return ok();
 }
 
 function applyScoreChange(playerIndex, dimension, requestedAmount, context = {}) {
@@ -712,13 +742,27 @@ function drawCards(playerIndex, count, skillOnly = false) {
       results.push(drawCard(playerIndex));
     }
   }
+  // 非常规摸牌溢出处理：手牌超过上限时，随机弃置超出部分（简化版，不强制打出）
+  const player = game.players[playerIndex];
+  if (player && player.hand.length > (player.handLimit ?? 5)) {
+    const excess = player.hand.length - (player.handLimit ?? 5);
+    for (let i = 0; i < excess; i++) {
+      const idx = Math.floor(Math.random() * player.hand.length);
+      const [removed] = player.hand.splice(idx, 1);
+      game.discard.push(removed);
+    }
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 手牌超过上限，弃置${excess}张。`, "event");
+  }
   return results;
 }
 
 function dealInitialHands() {
   game.players.forEach((player, playerIndex) => {
-    drawCards(playerIndex, 5, true);
-    appendLog(`${player.name} 从技能卡池抽取5张技能牌。`);
+    recomputeHandLimit(player);
+    const count = Math.min(5, player.handLimit);
+    drawCards(playerIndex, count, true);
+    appendLog(`${player.name} 从技能卡池抽取${count}张技能牌（手牌上限 ${player.handLimit}）。`);
   });
 }
 
@@ -773,6 +817,7 @@ function beginTurn() {
     usedAbilityIds: [],
     botSkillCardUsed: false,
     botAbilityUsed: false,
+    playableCards: player.handLimit ?? 5,
     number: game.turn.number + 1
   };
   appendLog(`轮到 ${player.name} 行动。`);
@@ -826,6 +871,7 @@ function buyCharacter(playerIndex, characterId) {
   });
   // 将角色的选曲品味加到玩家得分中
   player.scores.selection += character.stats.selection;
+  recomputeHandLimit(player);
   appendLog(`${player.name} 购置了「${character.name}」（选曲品味 +${character.stats.selection}），剩余${player.funds}点。`, "effect");
   return ok();
 }
@@ -1118,6 +1164,9 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
   if (player.silenced && game.turn.skillCardsPlayed >= 1) return fail("静默状态仅能打出一张手牌");
   if (player.skillCardLimit != null && game.turn.skillCardsPlayed >= player.skillCardLimit) {
     return fail(`本回合最多打出${player.skillCardLimit}张技能牌`);
+  }
+  if (game.turn.playableCards != null && game.turn.skillCardsPlayed >= game.turn.playableCards) {
+    return fail("本回合可打出的牌数已达上限");
   }
 
   let target = null;
@@ -1713,11 +1762,15 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("现在不能摸牌");
     if (game.round === 1) return fail("第1轮不摸牌");
     if (game.turn.hasDrawn) return fail("本回合已经摸过牌");
+    if (player.hand.length >= (player.handLimit ?? 5)) return fail("手牌已满，请先使用或弃牌");
     game.turn.hasDrawn = true;
     result = ok({ draw: drawCard(playerIndex) });
   } else if (action === "PLAY_CARD") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合使用技能牌");
     result = executeSkillCard(playerIndex, payload.cardUid, payload);
+  } else if (action === "DISCARD_CARD") {
+    if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合弃牌");
+    result = discardCard(playerIndex, payload.cardUid);
   } else if (action === "ACTIVATE_CHARACTER") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("只能在自己的回合发动角色技能");
     result = activateCharacter(playerIndex, payload.characterId, payload.abilityId, payload);

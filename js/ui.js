@@ -405,10 +405,10 @@ function renderTurn(me) {
   else if (ownTurn && !game.turn.hasDrawn) instruction = "本轮必须且只能摸1张牌";
   else if (ownTurn) instruction = "可以发动角色技能、打出技能牌或结束回合";
   return `
-    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>${firstRound ? "首轮不摸牌 · 禁用技能牌" : `牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 本回合打出 ${game.turn.skillCardsPlayed} 张技能牌`}</span></div></div>
+    <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>${firstRound ? "首轮不摸牌 · 禁用技能牌" : `牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 手牌上限 ${me?.handLimit ?? 5} · 本回合可出 ${game.turn.playableCards ?? 0} 张`}</span></div></div>
     ${renderPlayerStatuses(me, ownTurn)}
     <section class="section">
-      <div class="section-head"><h2>手牌</h2><span class="section-note">${me ? `${me.handCount}张` : "不可见"}</span></div>
+      <div class="section-head"><h2>手牌</h2><span class="section-note">${me ? `${me.handCount} / ${me.handLimit ?? 5} 张` : "不可见"}</span></div>
       ${hand.length ? `<div class="card-row">${hand.map(card => renderSkillCard(card, me, ownTurn)).join("")}</div>` : '<div class="empty">暂无技能牌。事件牌摸到后会立即触发，不会进入这里。</div>'}
     </section>
     <section class="section">
@@ -435,7 +435,7 @@ function renderTurn(me) {
     })()}
     <div class="actionbar">
       <span class="action-hint">${instruction}</span>
-      ${ownTurn && !firstRound && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${ui.pendingRequest ? "disabled" : ""}>${icon("hand", 15)} 摸1张牌</button>` : ""}
+      ${ownTurn && !firstRound && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${(ui.pendingRequest || me.hand.length >= (me.handLimit ?? 5)) ? "disabled" : ""}>${icon("hand", 15)} ${me.hand.length >= (me.handLimit ?? 5) ? "手牌已满" : "摸1张牌"}</button>` : ""}
       ${ownTurn ? `<button class="btn coral" id="end-turn" ${(mustUseCharacter || (!firstRound && !game.turn.hasDrawn) || ui.pendingRequest) ? "disabled" : ""}>${icon("skip-forward", 15)} 结束回合</button>` : ""}
     </div>`;
 }
@@ -470,6 +470,7 @@ function renderSkillCard(card, me, ownTurn) {
   const definition = skillDefinition(card.cardId);
   const managed = me && !me.isBot && me.aiControlled;
   const canUse = ownTurn && game.round > 1 && !ui.pendingRequest && !isAllSkillBlocked(me) && !managed;
+  const canDiscard = ownTurn && !ui.pendingRequest && !managed && game.phase === GAME_PHASE.TURN && game.round >= 1;
   let meta = "自己的回合使用";
   if (game.round === 1) meta = "第1轮不可使用";
   else if (managed) meta = "AI 托管中不可操作";
@@ -483,7 +484,11 @@ function renderSkillCard(card, me, ownTurn) {
     <div class="card-name">${escapeHtml(definition.name)}</div>
     <div class="card-desc">${escapeHtml(definition.description)}</div>
     <div class="card-meta">${meta}</div>
-    <div class="card-action"><button class="btn" data-play-card="${card.uid}" ${canUse ? "" : "disabled"}>${icon("play", 13)} 使用</button></div>
+    <div class="card-action">
+      <button class="btn" data-play-card="${card.uid}" ${canUse ? "" : "disabled"}>${icon("play", 13)} 使用</button>
+      <button class="btn" data-discard-card="${card.uid}" ${canDiscard ? "" : "disabled"} title="弃置此牌（本回合可打出的牌数-1）">${icon("trash-2", 13)} 弃牌</button>
+      <button class="btn" data-info-card="${card.uid}">${icon("info", 13)} 信息</button>
+    </div>
   </article>`;
 }
 
@@ -507,6 +512,12 @@ function bindTurn(me) {
   document.getElementById("end-turn")?.addEventListener("click", () => sendGameAction("END_TURN"));
   document.querySelectorAll("[data-play-card]").forEach(button => {
     button.onclick = () => openCardAction(button.dataset.playCard);
+  });
+  document.querySelectorAll("[data-discard-card]").forEach(button => {
+    button.onclick = () => sendGameAction("DISCARD_CARD", { cardUid: button.dataset.discardCard });
+  });
+  document.querySelectorAll("[data-info-card]").forEach(button => {
+    button.onclick = () => openCardInfo(button.dataset.infoCard);
   });
   document.querySelectorAll("[data-ability]").forEach(button => {
     button.onclick = () => openAbilityAction(button.dataset.character, button.dataset.ability);
@@ -602,6 +613,30 @@ function openCardAction(cardUid) {
   if (definition.target === "self") return sendGameAction("PLAY_CARD", { cardUid });
   const targets = game.players.filter(player => player.memberId !== me.memberId);
   ui.modal = { kind: "target-card", cardUid, title: definition.name, description: definition.description, targets };
+  render();
+}
+
+function openCardInfo(cardUid) {
+  const me = myGamePlayer();
+  const card = me?.hand.find(item => item.uid === cardUid);
+  if (!card) return;
+  if (card.type === "star") {
+    ui.modal = {
+      kind: "card-info",
+      title: "星（特殊牌）",
+      description: "无法打出，不计入手牌上限。受到减分时弃置抵消：每8点具象动效抵消1点减分。此牌不进入牌堆。"
+    };
+    return render();
+  }
+  const definition = skillDefinition(card.cardId);
+  if (!definition) return;
+  const rarityKey = definition.rarity || "white";
+  const categoryLabel = { growth: "成长", attack: "进攻", skill: "技能", draw: "抽牌" }[definition.category] || "技能";
+  ui.modal = {
+    kind: "card-info",
+    title: definition.name,
+    description: `${definition.description}（${categoryLabel} · ${SKILL_RARITY[rarityKey]?.label || "白"}稀有度）`
+  };
   render();
 }
 
