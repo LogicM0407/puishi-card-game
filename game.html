@@ -617,6 +617,7 @@
     text-align: center;
   }
   .rules-dialog ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+  .rules-dialog ul { margin: 0 0 8px; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
   .rules-dialog strong { color: var(--text); }
   .connection-warning {
     position: fixed;
@@ -7042,6 +7043,8 @@ function renderRulesModal() {
     <div class="modal-desc">${GLOBAL_MODIFIERS.map(modifier => `<p><strong>${escapeHtml(modifier.name)}</strong>：${escapeHtml(modifier.description)}</p>`).join("")}</div>
     <h4>技能牌</h4>
     <div class="modal-desc">${SKILL_CARDS.map(card => `<p><strong>${escapeHtml(card.name)}</strong>：${escapeHtml(card.description)}</p>`).join("")}</div>
+    <h4>更新日志</h4>
+    <div class="modal-desc">${CHANGELOG.map(group => `<p><strong>${escapeHtml(group.version)}</strong></p><ul>${group.items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`).join("")}</div>
   </div></div>`);
   document.getElementById("close-rules").onclick = () => { ui.rulesOpen = false; render(); };
 }
