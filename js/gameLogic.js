@@ -70,6 +70,7 @@ function createDeck() {
   // 技能牌稀有度仍由 drawSkillFromPool 中的 weightedSkillCard 维持
   const skillCards = [];
   SKILL_CARDS.forEach(card => {
+    if (card.special) return;
     for (let i = 0; i < 5; i++) skillCards.push(createCard("skill", card.id));
   });
   return shuffle([...skillCards, ...eventCards]);
@@ -152,6 +153,8 @@ function createGameState(members, totalRounds, globalModifier = null) {
       hasDrawn: false,
       skillCardsPlayed: 0,
       usedAbilityIds: [],
+      unsafeZonePlayedBy: [],
+      brilliantReplayed: false,
       number: 0
     },
     players: orderedMembers.map(member => ({
@@ -189,6 +192,16 @@ function createGameState(members, totalRounds, globalModifier = null) {
       handExchangeCost: 1,
       settlementPenalty: 0,
       skipNextTurn: false,
+      vitality: 0,
+      overtureActive: false,
+      overtureReduceUsed: false,
+      overtureDiscardUsed: false,
+      youSufferTurn: false,
+      arithmeticPending: false,
+      deificationPending: null,
+      dunStiliToggle: false,
+      worldTreeActive: false,
+      worldTreeStartRound: 0,
       counters: {
         summercubeMotion: 0,
         jinyeDraws: 0,
@@ -212,6 +225,16 @@ function createGameState(members, totalRounds, globalModifier = null) {
     forcePlay: false,
     turnDirection: 1,
     pecJamRestoreRound: null,
+    unsafeZone: false,
+    unsafeZoneUntilTurn: null,
+    dystopia: null,
+    dystopiaQueue: [],
+    sevenTrace: null,
+    skillHistory: [],
+    overtureResetRound: 0,
+    arithmetic: null,
+    lastReduction: null,
+    lastDiscard: null,
     sequence: 0,
     effectDepth: 0,
     createdAt: Date.now()
@@ -228,6 +251,15 @@ function refillDeckIfNeeded() {
 
 function ownsCharacter(player, characterId) {
   return Boolean(player?.characters.some(instance => instance.id === characterId && !instance.permanentlyDisabled));
+}
+
+// 玩家「爆肝程度」：取已购置角色中 stamina 最高者（含 staminaBonus）
+function playerMaxStamina(player) {
+  if (!player?.characters?.length) return 0;
+  return player.characters.reduce((max, instance) => {
+    const stamina = (characterStats(instance.id)?.stamina || 0) + (instance.staminaBonus || 0);
+    return Math.max(max, stamina);
+  }, 0);
 }
 
 
@@ -284,6 +316,7 @@ function discardCard(playerIndex, cardUid) {
   const [card] = player.hand.splice(idx, 1);
   game.discard.push(card);
   player.handCount = player.hand.length;
+  game.lastDiscard = { playerIndex, cardUid: card.uid, cardId: card.cardId, turn: game.turn.number };
   const name = skillDefinition(card.cardId)?.name || "牌";
   game.turn.playableCards = Math.max(0, (game.turn.playableCards ?? player.handLimit) - 1);
   handleNonPlayCardLoss(playerIndex, 1);
@@ -358,6 +391,13 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
   }
   if (!amount) return 0;
 
+  // 反乌托邦：持续期间，减分先记录到待抵消队列（延迟生效）
+  if (amount < 0 && game.dystopia && game.turn.number < game.dystopia.untilTurn && !context.skipDystopia) {
+    game.dystopiaQueue.push({ playerIndex, dimension, amount: Math.abs(amount), offset: false });
+    appendLog(`「反乌托邦」：${player.name} 的${DIMENSION_LABELS[dimension]}减分${Math.abs(amount)}点被记录到待抵消队列。`, "event");
+    return 0;
+  }
+
   if (amount < 0 && player.hand.some(c => c.type === "star") && !context.skipStarPending) {
     if (!game.pendingStarMitigation || game.pendingStarMitigation.memberId !== player.memberId) {
       game.pendingStarMitigation = { memberId: player.memberId, reductions: [] };
@@ -368,6 +408,23 @@ function applyScoreChange(playerIndex, dimension, requestedAmount, context = {})
 
   const beforeAll = game.players.map(candidate => candidate.scores[dimension]);
   player.scores[dimension] += amount;
+  if (amount < 0) {
+    game.lastReduction = { playerIndex, dimension, amount: Math.abs(amount), turn: game.turn.number };
+  }
+  // 不安全领域：减分时50%概率随机弃一张手牌
+  if (amount < 0 && game.unsafeZone && game.turn.number < game.unsafeZoneUntilTurn && player.hand.length > 0 && Math.random() < 0.5) {
+    const idx = Math.floor(Math.random() * player.hand.length);
+    const [dropped] = player.hand.splice(idx, 1);
+    game.discard.push(dropped);
+    player.handCount = player.hand.length;
+    appendLog(`「不安全领域」：${player.name} 受到减分，随机弃置一张手牌。`, "event");
+  }
+  // 钝斯提李被动：维度有效变化且仅涉及1个维度时，抽象动效与创新能力各+1（直接改值防递归）
+  if (amount !== 0 && ownsCharacter(player, "dun-stili") && !context.skipDunStili) {
+    player.scores.abstract += 1;
+    player.scores.innovation += 1;
+    appendLog(`${player.name} 的「钝斯提李」被动触发：抽象动效+1、创新能力+1。`, "effect");
+  }
   game.effectDepth++;
   runScorePassives(playerIndex, dimension, amount, beforeAll, context);
   game.effectDepth--;
@@ -761,11 +818,28 @@ function resolvePendingEvent(memberId, payload = {}) {
 function drawSkillFromPool(playerIndex) {
   const player = game.players[playerIndex];
   if (!player) return null;
+  const worldTree = tryDrawWorldTree(playerIndex);
+  if (worldTree) return worldTree;
   const definition = weightedSkillCard();
   const card = createCard("skill", definition.id);
   player.hand.push(card);
   player.handCount = player.hand.length;
+  if (card.cardId === "deification") player.deificationPending = card.uid;
   return card;
+}
+
+// 世界树：每次摸牌时先判定，创新>15且爆肝>10时有15%概率替换本次摸牌
+function tryDrawWorldTree(playerIndex) {
+  const player = game.players[playerIndex];
+  if (!player) return null;
+  if ((player.scores.innovation || 0) > 15 && playerMaxStamina(player) > 10 && Math.random() < 0.15) {
+    const card = createCard("skill", "world-tree");
+    player.hand.push(card);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 触发了「世界树」的召唤！`, "event");
+    return card;
+  }
+  return null;
 }
 
 // 按稀有度加权抽取技能牌：白50% / 绿25% / 蓝15% / 紫7% / 橙2.9% / 彩0.1%
@@ -773,6 +847,7 @@ function weightedSkillCard() {
   const weighted = [];
   let totalWeight = 0;
   SKILL_CARDS.forEach(card => {
+    if (card.special) return;
     const w = SKILL_RARITY[card.rarity]?.weight ?? 0;
     if (w > 0) { weighted.push({ card, w }); totalWeight += w; }
   });
@@ -790,12 +865,16 @@ function drawCard(playerIndex) {
   const player = game.players[playerIndex];
   if (!player) return { kind: "empty" };
 
+  const worldTree = tryDrawWorldTree(playerIndex);
+  if (worldTree) return { kind: "skill", name: "世界树" };
+
   if (ownsCharacter(player, "cherry")) {
     const skillIndex = game.deck.map(item => item.type).lastIndexOf("skill");
     if (skillIndex >= 0) {
       const card = game.deck.splice(skillIndex, 1)[0];
       player.hand.push(card);
       player.handCount = player.hand.length;
+      if (card.cardId === "deification") player.deificationPending = card.uid;
       appendLog(`${player.name} 摸到1张技能牌。`);
       return { kind: "skill", name: skillDefinition(card.cardId)?.name || "技能牌" };
     }
@@ -816,6 +895,7 @@ function drawCard(playerIndex) {
   }
   player.hand.push(card);
   player.handCount = player.hand.length;
+  if (card.cardId === "deification") player.deificationPending = card.uid;
   const skill = skillDefinition(card.cardId);
   appendLog(`${player.name} 摸到1张技能牌。`);
   return { kind: "skill", name: skill.name };
@@ -857,6 +937,101 @@ function dealInitialHands() {
     drawCards(playerIndex, count, true);
     appendLog(`${player.name} 从技能卡池抽取${count}张技能牌（手牌上限 ${player.handLimit}）。`);
   });
+}
+
+function settleDystopia() {
+  if (!game.dystopia) return;
+  const owner = game.players[game.dystopia.ownerIndex];
+  const queue = game.dystopiaQueue;
+  let allOffset = queue.length > 0;
+  queue.forEach(item => {
+    if (!item.offset) {
+      allOffset = false;
+      applyScoreChange(item.playerIndex, item.dimension, -item.amount, {
+        sourcePlayerIndex: game.dystopia.ownerIndex,
+        skipDystopia: true,
+        skipStarPending: true
+      });
+    }
+  });
+  if (allOffset && owner) {
+    const card = createCard("skill", "utopia-overture");
+    owner.hand.push(card);
+    owner.handCount = owner.hand.length;
+    appendLog(`${owner.name} 本轮所有减分均被抵消，获得一张【乌托邦序曲】。`, "event");
+  }
+  game.dystopia = null;
+  game.dystopiaQueue = [];
+}
+
+function offsetDystopia(playerIndex, cardUid) {
+  if (!game.dystopia || game.dystopia.ownerIndex !== playerIndex) return fail("你没有激活反乌托邦");
+  const player = game.players[playerIndex];
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return fail("手牌不存在");
+  const [discarded] = player.hand.splice(idx, 1);
+  game.discard.push(discarded);
+  player.handCount = player.hand.length;
+  let target = null;
+  for (let i = game.dystopiaQueue.length - 1; i >= 0; i--) {
+    if (!game.dystopiaQueue[i].offset) { target = game.dystopiaQueue[i]; break; }
+  }
+  if (target) {
+    target.offset = true;
+    appendLog(`${player.name} 弃置一张手牌，抵消了${game.players[target.playerIndex].name}的${DIMENSION_LABELS[target.dimension]}减分。`, "effect");
+  } else {
+    appendLog(`${player.name} 弃置一张手牌，但当前无可抵消的减分。`, "event");
+  }
+  return ok();
+}
+
+function overtureReduce(playerIndex) {
+  const player = game.players[playerIndex];
+  if (!player.overtureActive) return fail("你没有序曲效果");
+  if (player.overtureReduceUsed) return fail("本轮减分响应已用过");
+  if (!game.lastReduction || game.lastReduction.turn !== game.turn.number) return fail("当前没有可响应的减分");
+  const r = game.lastReduction;
+  applyScoreChange(r.playerIndex, r.dimension, r.amount, { sourcePlayerIndex: playerIndex, skipStarPending: true });
+  const topEntry = game.players.reduce((best, p) => {
+    const sumBest = DIMENSIONS.reduce((s, d) => s + best.scores[d], 0);
+    const sumP = DIMENSIONS.reduce((s, d) => s + p.scores[d], 0);
+    return sumP > sumBest ? p : best;
+  }, game.players[0]);
+  const topIdx = game.players.indexOf(topEntry);
+  applyScoreChange(topIdx, randomDimension(), -4, { sourcePlayerIndex: playerIndex, skipStarPending: true });
+  player.overtureReduceUsed = true;
+  game.lastReduction = null;
+  appendLog(`${player.name} 发动「序曲·减分响应」：抵消减分，并使${topEntry.name}随机维度-4。`, "effect");
+  return ok();
+}
+
+function overtureDiscard(playerIndex) {
+  const player = game.players[playerIndex];
+  if (!player.overtureActive) return fail("你没有序曲效果");
+  if (player.overtureDiscardUsed) return fail("本轮弃牌响应已用过");
+  if (!game.lastDiscard || game.lastDiscard.turn !== game.turn.number) return fail("当前没有可响应的弃牌");
+  const d = game.lastDiscard;
+  // 抵消弃牌：若牌还在弃牌堆末尾，则还回
+  const top = game.discard[game.discard.length - 1];
+  const victim = game.players[d.playerIndex];
+  let restored = false;
+  if (top && top.uid === d.cardUid && victim) {
+    game.discard.pop();
+    victim.hand.push(top);
+    victim.handCount = victim.hand.length;
+    restored = true;
+  }
+  const mostHand = game.players.reduce((best, p) => (p.hand.length > best.hand.length ? p : best), game.players[0]);
+  for (let i = 0; i < 2; i++) {
+    if (!mostHand.hand.length) break;
+    const [dropped] = mostHand.hand.splice(mostHand.hand.length - 1, 1);
+    game.discard.push(dropped);
+  }
+  mostHand.handCount = mostHand.hand.length;
+  player.overtureDiscardUsed = true;
+  game.lastDiscard = null;
+  appendLog(`${player.name} 发动「序曲·弃牌响应」${restored ? "：抵消弃牌" : ""}，并使${mostHand.name}弃置2张牌。`, "effect");
+  return ok();
 }
 
 function beginTurn() {
@@ -910,11 +1085,62 @@ function beginTurn() {
     usedAbilityIds: [],
     botSkillCardUsed: false,
     botAbilityUsed: false,
+    unsafeZonePlayedBy: [],
+    brilliantReplayed: false,
     playableCards: player.handLimit ?? 5,
     number: game.turn.number + 1
   };
+  // 不安全领域到期
+  if (game.unsafeZone && game.turn.number >= game.unsafeZoneUntilTurn) {
+    game.unsafeZone = false;
+    game.unsafeZoneUntilTurn = null;
+    appendLog("「不安全领域」已结束。", "event");
+  }
+  // 反乌托邦到期结算
+  if (game.dystopia && game.turn.number >= game.dystopia.untilTurn) {
+    settleDystopia();
+  }
+  // 序曲响应次数每轮重置
+  if (game.round !== game.overtureResetRound) {
+    game.overtureResetRound = game.round;
+    game.players.forEach(p => {
+      p.overtureReduceUsed = false;
+      p.overtureDiscardUsed = false;
+    });
+  }
+  // 世界树生机机制
+  if (player.worldTreeActive && game.round > player.worldTreeStartRound) {
+    let gain = ownsCharacter(player, "summercube") ? 3 : 1;
+    player.vitality += gain;
+    if (player.vitality >= 3) {
+      player.vitality = 0;
+      const maxChar = player.characters.reduce((best, c) => {
+        const s = (characterStats(c.id)?.stamina || 0) + (c.staminaBonus || 0);
+        const bs = best ? (characterStats(best.id)?.stamina || 0) + (best.staminaBonus || 0) : -1;
+        return s > bs ? c : best;
+      }, null);
+      if (maxChar) maxChar.staminaBonus = (maxChar.staminaBonus || 0) + 5;
+      const newCard = createCard("skill", "world-tree");
+      player.hand.push(newCard);
+      player.handCount = player.hand.length;
+      appendLog(`${player.name} 的生机达到3点：爆肝程度+5，并获得一张【世界树】。`, "effect");
+    }
+  }
   appendLog(`轮到 ${player.name} 行动。`);
   player.lastActionAt = Date.now();
+  // 神化论：抽到后下个自己回合开始时自动打出
+  if (player.deificationPending) {
+    const pendingCard = player.hand.find(c => c.uid === player.deificationPending && c.cardId === "deification");
+    if (pendingCard) {
+      executeSkillCard(game.currentPlayerIndex, pendingCard.uid, {});
+    }
+    player.deificationPending = null;
+  }
+  // 算数教室：未答对时下回合重复出题
+  if (player.arithmeticPending) {
+    player.arithmeticPending = false;
+    openArithmeticQuestion(game.currentPlayerIndex);
+  }
   if (player.extraDrawNextTurn > 0) {
     const count = player.extraDrawNextTurn;
     player.extraDrawNextTurn = 0;
@@ -927,6 +1153,16 @@ function beginTurn() {
     }
     scheduleBotAction();
     return;
+  }
+  // You Suffer：本回合仅1秒，倒计时结束自动结束回合
+  if (player.youSufferTurn) {
+    player.youSufferTurn = false;
+    appendLog(`${player.name} 受到「You Suffer」影响：本回合仅1秒。`, "event");
+    setTimeout(() => {
+      if (room.isHost && game && game.phase === GAME_PHASE.TURN && currentPlayer() === player) {
+        hostDispatch(player.memberId, "END_TURN", {}, "", true);
+      }
+    }, 1000);
   }
   if (!player.isBot && player.connected === false) {
     appendLog(`${player.name} 处于断线状态，AI 将在 15 秒后接管操作。`, "event");
@@ -1016,6 +1252,10 @@ function canActivateCharacter(player, instance, ability) {
   if (instance.cooldowns[ability.id] > 0) return fail(`技能冷却剩余${instance.cooldowns[ability.id]}回合`);
   if (ability.maxUses && instance.uses[ability.id] >= ability.maxUses) return fail("该技能已达到发动次数上限");
   if (ability.id === "ftayo-main" && game.round > Math.floor(game.totalRounds * .7)) return fail("已超过总回合数70%");
+  if (instance.id === "dun-stili") {
+    if (ability.id === "dun-stili-rarity" && player.dunStiliToggle) return fail("本回合应使用另一个效果");
+    if (ability.id === "dun-stili-peak" && !player.dunStiliToggle) return fail("本回合应使用另一个效果");
+  }
   return ok();
 }
 
@@ -1046,6 +1286,13 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     const uids = Array.isArray(payload.discardUids) ? [...new Set(payload.discardUids)] : [];
     if (!uids.length || uids.length > 3) return fail("请选择1~3张要弃置的牌");
     if (uids.some(uid => !player.hand.some(c => c.uid === uid && c.type !== "star"))) return fail("只能弃置手中的技能牌");
+  }
+  if (ability.choice === "rarity") {
+    const rarity = payload.rarity;
+    if (!SKILL_RARITY[rarity]) return fail("请选择一个稀有度");
+  }
+  if (ability.choice === "own-peak-dimension") {
+    if (payload.dimension && !CHANGEABLE_DIMENSIONS.includes(payload.dimension)) return fail("请选择一个有效维度");
   }
 
   if (game.round === 1) {
@@ -1225,6 +1472,35 @@ function activateCharacter(playerIndex, characterId, abilityId, payload = {}) {
     applyScoreChange(playerIndex, "abstract", points, { sourcePlayerIndex: playerIndex });
     applyScoreChange(playerIndex, "concrete", points, { sourcePlayerIndex: playerIndex });
     appendLog(`${player.name} 发动「子阳」技能：每2点创新获得1点抽象、1点具象（具象提升翻倍）。`, "effect");
+  } else if (ability.id === "dun-stili-rarity") {
+    const rarity = payload.rarity;
+    const discarded = player.hand.filter(c => c.type !== "star" && skillDefinition(c.cardId)?.rarity === rarity);
+    discarded.forEach(c => {
+      const i = player.hand.indexOf(c);
+      if (i >= 0) player.hand.splice(i, 1);
+      game.discard.push(c);
+    });
+    player.handCount = player.hand.length;
+    const x = Math.min(discarded.length, 5);
+    if (x > 0) {
+      const dim = randomDimension();
+      applyScoreChange(playerIndex, dim, x, { sourcePlayerIndex: playerIndex });
+      appendLog(`${player.name} 发动「钝斯提李」效果1：弃置${discarded.length}张${rarity}牌，${DIMENSION_LABELS[dim]}+${x}。`, "effect");
+    } else {
+      appendLog(`${player.name} 发动「钝斯提李」效果1：没有可弃置的${rarity}牌。`, "effect");
+    }
+    if (player.hand.length === 0) {
+      drawCards(playerIndex, 1);
+      appendLog(`${player.name} 弃置后手牌为空，摸1张牌。`, "effect");
+    }
+    player.dunStiliToggle = true;
+  } else if (ability.id === "dun-stili-peak") {
+    const dim = payload.dimension || CHANGEABLE_DIMENSIONS.reduce((best, d) => player.scores[d] >= player.scores[best] ? d : best, "config");
+    applyScoreChange(playerIndex, dim, -3, { sourcePlayerIndex: playerIndex });
+    drawCards(playerIndex, 2);
+    player.handCount = player.hand.length;
+    appendLog(`${player.name} 发动「钝斯提李」效果2：${DIMENSION_LABELS[dim]}-3，摸2张牌。`, "effect");
+    player.dunStiliToggle = false;
   }
 
   const actualCooldown = ability.id === "two-three-eight-main" && ownsCharacter(player, "ftayo") ? 2 : ability.cooldown;
@@ -1302,6 +1578,10 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
       return fail("对方声望需要低于你");
     }
   }
+
+  const brilliantSnapshot = (card.enchant === "brilliant" && !game.turn.brilliantReplayed)
+    ? game.players.map(p => ({ ...p.scores }))
+    : null;
 
   if (definition.id === "review") {
     player.reviewTurns = Math.max(player.reviewTurns, 3);
@@ -1666,6 +1946,64 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     applyScoreChange(playerIndex, "concrete", 6 * skillCardPointMultiplier(player), { sourcePlayerIndex: playerIndex, fromSkillCard: true });
     player.silencedNextTurn = true;
     appendLog(`${player.name} 打出「里门」：抽象+6、具象+6，下回合进入静默状态。`, "effect");
+  } else if (definition.id === "unsafe-zone") {
+    if (game.turn.unsafeZonePlayedBy.includes(player.memberId)) return fail("本回合已打出过「不安全领域」");
+    game.turn.unsafeZonePlayedBy.push(player.memberId);
+    applyScoreChange(playerIndex, "abstract", 3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    applyScoreChange(playerIndex, "config", 2, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    game.unsafeZone = true;
+    game.unsafeZoneUntilTurn = game.turn.number + game.players.length;
+    appendLog(`${player.name} 打出「不安全领域」：抽象+3、配置+2，全场进入不安全领域。`, "effect");
+  } else if (definition.id === "deification") {
+    player.hand.forEach(card => {
+      if (card.uid === cardUid || card.type !== "skill") return;
+      const def = skillDefinition(card.cardId);
+      if (!def) return;
+      if (def.category === "skill") card.enchant = "agile";
+      else if (def.category === "growth") card.enchant = "brilliant";
+      else if (def.category === "attack") card.enchant = "miracle";
+    });
+    player.skillCardLimit = 3;
+    appendLog(`${player.name} 打出「神化论」：手牌已附魔，本回合最多主动打出3张牌。`, "effect");
+  } else if (definition.id === "dystopia") {
+    applyScoreChange(playerIndex, "config", 8, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    game.dystopia = { ownerIndex: playerIndex, untilTurn: game.turn.number + game.players.length };
+    game.dystopiaQueue = [];
+    appendLog(`${player.name} 打出「反乌托邦」：配置+8，进入待抵消状态。`, "effect");
+  } else if (definition.id === "utopia-overture") {
+    applyScoreChange(playerIndex, "abstract", 3, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    player.overtureActive = true;
+    appendLog(`${player.name} 打出「乌托邦序曲」：抽象+3，获得永久【序曲】效果。`, "effect");
+  } else if (definition.id === "world-tree") {
+    const stamina = playerMaxStamina(player);
+    const gain = Math.floor(stamina / 2) * 3;
+    applyScoreChange(playerIndex, "concrete", gain, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    player.worldTreeActive = true;
+    player.worldTreeStartRound = game.round;
+    appendLog(`${player.name} 打出「世界树」：爆肝${stamina}点，具象动效+${gain}。`, "effect");
+  } else if (definition.id === "you-suffer") {
+    target.youSufferTurn = true;
+    appendLog(`${player.name} 对${target.name}打出「You Suffer」：其下一回合仅1秒。`, "effect");
+  } else if (definition.id === "seven-trace") {
+    return executeSevenTrace(playerIndex, cardUid);
+  } else if (definition.id === "arithmetic") {
+    openArithmeticQuestion(playerIndex);
+  } else if (definition.id === "everything-unfinished") {
+    return executeEverythingUnfinished(playerIndex, cardUid);
+  }
+
+  // 华彩重放：首次华彩牌效果额外执行一次（按维度差值重放）
+  if (brilliantSnapshot) {
+    game.turn.brilliantReplayed = true;
+    game.players.forEach((p, i) => {
+      DIMENSIONS.forEach(dim => {
+        const delta = p.scores[dim] - brilliantSnapshot[i][dim];
+        if (delta !== 0) {
+          applyScoreChange(i, dim, delta, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+        }
+      });
+    });
+    appendLog(`「华彩」：${player.name} 的牌效果重放一次。`, "effect");
   }
 
   if (definition.id !== "remap") {
@@ -1673,6 +2011,11 @@ function executeSkillCard(playerIndex, cardUid, payload = {}) {
     if (!consumePlayedSkillCard(playerIndex, cardUid)) return fail("卡牌消耗失败");
   }
   game.turn.lastSkillCardId = definition.id;
+  if (definition.id !== "seven-trace" && definition.id !== "arithmetic" && definition.id !== "everything-unfinished") {
+    game.skillHistory.push({ cardId: definition.id, rarity: definition.rarity, round: game.round });
+  }
+  // 附魔效果
+  applyEnchantEffects(playerIndex, card);
   if (player.beibeiSkipTurn) {
     player.beibeiSkipTurn = false;
     endTurn(playerIndex);
@@ -1693,6 +2036,217 @@ function handleNonPlayCardLoss(playerIndex, count) {
     applyScoreChange(playerIndex, randomDimension(), 3, { sourcePlayerIndex: playerIndex });
   }
   if (triggers > 0) appendLog(`${player.name} 因非打出方式失去${triggers}张牌，随机维度获得加成。`, "effect");
+}
+
+function applyEnchantEffects(playerIndex, card) {
+  const player = game.players[playerIndex];
+  if (!player || !card || !card.enchant) return;
+  if (card.enchant === "agile") {
+    const dim = randomDimension(true);
+    applyScoreChange(playerIndex, dim, 2, { sourcePlayerIndex: playerIndex, allowSelectionChange: true });
+    appendLog(`「灵巧」：${player.name} 的${DIMENSION_LABELS[dim]}+2。`, "effect");
+  } else if (card.enchant === "miracle") {
+    drawCards(playerIndex, 1);
+    appendLog(`「奇迹」：${player.name} 再摸1张牌。`, "effect");
+  }
+}
+
+function executeSevenTrace(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return fail("手牌不存在");
+  const [used] = player.hand.splice(idx, 1);
+  game.discard.push(used);
+  player.handCount = player.hand.length;
+  if (!game.forcePlay) game.turn.skillCardsPlayed++;
+  game.skillHistory.push({ cardId: "seven-trace", rarity: "blue", round: game.round });
+  refillDeckIfNeeded();
+  // 从牌堆抽最多7张 (稀有度, 类别) 组合唯一的技能牌
+  const selected = [];
+  const seen = new Set();
+  for (let i = game.deck.length - 1; i >= 0 && selected.length < 7; i--) {
+    const c = game.deck[i];
+    if (c.type !== "skill") continue;
+    const def = skillDefinition(c.cardId);
+    if (!def) continue;
+    const key = `${def.rarity}|${def.category}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(c);
+    game.deck.splice(i, 1);
+  }
+  // 按总分降序排序玩家，循环分配
+  const order = game.players.map((p, i) => ({ p, i }))
+    .sort((a, b) => totalScore(b.p) - totalScore(a.p))
+    .map(e => e.i);
+  let cursor = 0;
+  selected.forEach(card => {
+    let assigned = false;
+    for (let k = 0; k < order.length; k++) {
+      const targetIdx = order[(cursor + k) % order.length];
+      const target = game.players[targetIdx];
+      if (target.hand.length < (target.handLimit ?? 5)) {
+        target.hand.push(card);
+        target.handCount = target.hand.length;
+        appendLog(`${target.name} 从「七迹」中获得了「${skillDefinition(card.cardId)?.name || "牌"}」。`, "effect");
+        cursor = (cursor + k + 1) % order.length;
+        assigned = true;
+        break;
+      }
+    }
+    if (!assigned) {
+      game.discard.push(card);
+      appendLog("「七迹」：有牌因无人可收被弃置。", "event");
+    }
+  });
+  appendLog(`${player.name} 打出「七迹」，抽取${selected.length}张牌并分配。`, "effect");
+  return ok();
+}
+
+function replaySkillEffect(playerIndex, cardId) {
+  const player = game.players[playerIndex];
+  const mult = skillCardPointMultiplier(player);
+  const self = { sourcePlayerIndex: playerIndex, fromSkillCard: true };
+  switch (cardId) {
+    case "study":
+      applyScoreChange(playerIndex, randomDimension(true), 3 * mult, { ...self, allowSelectionChange: true });
+      break;
+    case "only-this": {
+      const d = DIMENSIONS.reduce((best, dd) => player.scores[dd] > player.scores[best] ? dd : best, "config");
+      applyScoreChange(playerIndex, d, 3 * mult, { ...self, allowSelectionChange: true });
+      break;
+    }
+    case "observe":
+    case "start-chart":
+      CHANGEABLE_DIMENSIONS.forEach(d => applyScoreChange(playerIndex, d, mult, self));
+      break;
+    case "burn-out":
+      CHANGEABLE_DIMENSIONS.forEach(d => applyScoreChange(playerIndex, d, mult, self));
+      break;
+    case "learn-from":
+      applyScoreChange(playerIndex, "innovation", 4 * mult, self);
+      break;
+    case "finish-chart": {
+      const g = Math.floor(player.scores.abstract / 3);
+      applyScoreChange(playerIndex, "config", g, self);
+      break;
+    }
+    case "concise":
+      applyScoreChange(playerIndex, "concrete", -3, self);
+      applyScoreChange(playerIndex, "config", 4 * mult, self);
+      break;
+    case "image":
+      gainReputation(playerIndex, 2);
+      break;
+    case "x-xxx":
+      applyScoreChange(playerIndex, "selection", 8 * mult, { ...self, allowSelectionChange: true });
+      break;
+    case "record":
+      applyScoreChange(playerIndex, "selection", 7 * mult, { ...self, allowSelectionChange: true });
+      break;
+    case "rizline":
+      applyScoreChange(playerIndex, "concrete", 10 * mult, self);
+      break;
+    case "double-fall":
+      applyScoreChange(playerIndex, "config", 4 * mult, self);
+      if (player.scores.config > 20) applyScoreChange(playerIndex, "config", 4 * mult, self);
+      break;
+    default:
+      applyScoreChange(playerIndex, "abstract", 1, self);
+      break;
+  }
+}
+
+function executeEverythingUnfinished(playerIndex, cardUid) {
+  const player = game.players[playerIndex];
+  const idx = player.hand.findIndex(c => c.uid === cardUid);
+  if (idx < 0) return fail("手牌不存在");
+  const [used] = player.hand.splice(idx, 1);
+  game.discard.push(used);
+  player.handCount = player.hand.length;
+  if (!game.forcePlay) game.turn.skillCardsPlayed++;
+  game.skillHistory.push({ cardId: "everything-unfinished", rarity: "purple", round: game.round });
+  const n = Math.min(game.round - 1, 8);
+  if (n > 0) applyScoreChange(playerIndex, "abstract", n, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+  const priority = ["rainbow", "orange", "purple", "blue", "green", "white"];
+  let bestCardId = null;
+  let bestPriority = priority.length;
+  game.skillHistory.forEach(h => {
+    if (h.round >= game.round) return;
+    const p = priority.indexOf(h.rarity);
+    if (p >= 0 && p < bestPriority) { bestPriority = p; bestCardId = h.cardId; }
+  });
+  if (bestCardId) {
+    replaySkillEffect(playerIndex, bestCardId);
+    appendLog(`${player.name} 打出「一切未竟」：重放历史卡色最高的「${skillDefinition(bestCardId)?.name || "牌"}」效果。`, "effect");
+  } else {
+    appendLog(`${player.name} 打出「一切未竟」，但没有可回溯的历史技能牌。`, "event");
+  }
+  return ok();
+}
+
+function generateArithmeticQuestion(medium) {
+  const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const make = (answer) => {
+    if (medium) {
+      const op = randomItem(["+", "-", "*"]);
+      if (op === "+") { const b = randInt(5, 20); return { text: `${answer - b} + ${b}`, answer }; }
+      if (op === "-") { const b = randInt(3, 10); return { text: `${answer + b} - ${b}`, answer }; }
+      const b = randomItem([3, 9]); return { text: `${answer / b} × ${b}`, answer };
+    }
+    const op = randomItem(["+", "-"]);
+    if (op === "+") { const b = randInt(1, 8); return { text: `${answer - b} + ${b}`, answer }; }
+    const b = randInt(1, 5); return { text: `${answer + b} - ${b}`, answer };
+  };
+  const correctIndex = Math.floor(Math.random() * 3);
+  const questions = [];
+  for (let i = 0; i < 3; i++) {
+    if (i === correctIndex) questions.push(make(9));
+    else {
+      let wrong;
+      do { wrong = randInt(3, 15); } while (wrong === 9);
+      questions.push(make(wrong));
+    }
+  }
+  return { questions, correctIndex };
+}
+
+function openArithmeticQuestion(playerIndex) {
+  const player = game.players[playerIndex];
+  if (!player) return;
+  const medium = ownsCharacter(player, "sulfur");
+  const timeLimit = medium ? 15000 : 5000;
+  game.arithmetic = {
+    playerIndex,
+    medium,
+    ...generateArithmeticQuestion(medium),
+    expiresAt: Date.now() + timeLimit
+  };
+  appendLog(`${player.name} 面临「算数教室」的挑战。`, "event");
+}
+
+function resolveArithmetic(playerIndex, selectedIndex) {
+  if (!game.arithmetic || game.arithmetic.playerIndex !== playerIndex) return fail("没有待作答的算术题");
+  const arith = game.arithmetic;
+  const player = game.players[playerIndex];
+  const correct = Number(selectedIndex) === arith.correctIndex;
+  const hasSulfur = ownsCharacter(player, "sulfur");
+  if (correct) {
+    applyScoreChange(playerIndex, "concrete", 9, { sourcePlayerIndex: playerIndex, fromSkillCard: true });
+    if (hasSulfur) {
+      DIMENSIONS.forEach(dim => applyScoreChange(playerIndex, dim, 9, { sourcePlayerIndex: playerIndex, allowSelectionChange: true }));
+      appendLog(`${player.name} 答对算术题（SulfurDXD加成）：具象+9，六维各+9。`, "effect");
+    } else {
+      appendLog(`${player.name} 答对算术题：具象动效+9。`, "effect");
+    }
+  } else {
+    const dim = randomDimension(true);
+    applyScoreChange(playerIndex, dim, -9, { sourcePlayerIndex: playerIndex, allowSelectionChange: true });
+    player.arithmeticPending = true;
+    appendLog(`${player.name} 算术题答错或超时：${DIMENSION_LABELS[dim]}-9，下回合将重新出题。`, "event");
+  }
+  game.arithmetic = null;
+  return ok();
 }
 
 function executeReviewVote(playerIndex, payload = {}) {
@@ -1876,7 +2430,7 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   const ownTurn = game.currentPlayerIndex === playerIndex;
   let result = fail("未知操作");
 
-  if (game.pendingEvent && action !== "RESOLVE_EVENT" && action !== "RESOLVE_STAR_MITIGATION") {
+  if (game.pendingEvent && action !== "RESOLVE_EVENT" && action !== "RESOLVE_STAR_MITIGATION" && action !== "ANSWER_ARITHMETIC" && action !== "OVERTURE_REDUCE" && action !== "OVERTURE_DISCARD" && action !== "DYSTOPIA_OFFSET") {
     return fail("请先完成当前事件牌结算");
   }
   if (action === "RESOLVE_EVENT") {
@@ -1931,6 +2485,14 @@ function hostDispatch(memberId, action, payload = {}, requestId = "", internalCa
   } else if (action === "END_TURN") {
     if (game.phase !== GAME_PHASE.TURN || !ownTurn) return fail("现在不能结束回合");
     result = endTurn(playerIndex);
+  } else if (action === "ANSWER_ARITHMETIC") {
+    result = resolveArithmetic(playerIndex, payload.selectedIndex);
+  } else if (action === "DYSTOPIA_OFFSET") {
+    result = offsetDystopia(playerIndex, payload.cardUid);
+  } else if (action === "OVERTURE_REDUCE") {
+    result = overtureReduce(playerIndex);
+  } else if (action === "OVERTURE_DISCARD") {
+    result = overtureDiscard(playerIndex);
   }
 
   if (result.ok) {
@@ -1991,6 +2553,13 @@ function botAbilityPayload(playerIndex, instance, ability) {
     if (!skillCards.length) return {};
     const count = Math.min(3, skillCards.length);
     return { discardUids: shuffle(skillCards).slice(0, count).map(c => c.uid) };
+  }
+  if (ability.choice === "rarity") {
+    const rarities = Object.keys(SKILL_RARITY).filter(r => player.hand.some(c => c.type !== "star" && skillDefinition(c.cardId)?.rarity === r));
+    return rarities.length ? { rarity: randomItem(rarities) } : {};
+  }
+  if (ability.choice === "own-peak-dimension") {
+    return {};
   }
   return {};
 }
@@ -2306,6 +2875,7 @@ function publicGameFor(memberId) {
     player.handCount = player.hand.length;
     if (player.memberId !== memberId) {
       player.hand = [];
+      player.vitality = 0; // 生机为隐藏属性，仅自己可见
     } else {
       player.connected = true;
     }

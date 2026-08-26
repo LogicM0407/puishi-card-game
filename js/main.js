@@ -54,6 +54,7 @@ const ui = {
   hostLostAt: 0,
   hostPeriodicTimer: null,
   gapTimer: null,
+  arithmeticTimer: null,
   chatMessages: [],
   chatInput: "",
   chatOpen: false,

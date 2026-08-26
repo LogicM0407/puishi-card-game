@@ -1,7 +1,13 @@
 "use strict";
 
-const VERSION = "v2.3.0";
+const VERSION = "v2.4.0";
 const CHANGELOG = Object.freeze([
+  { version: "v2.4.0", items: [
+    "内容更新：新增技能牌「不安全领域」「神化论」「反乌托邦」「世界树」「You Suffer」「七迹」「算数教室」「一切未竟」与特殊牌「乌托邦序曲」",
+    "内容更新：里门改为蓝色品质，静默规则补充强制打出不受限制、已禁用则维持原状态",
+    "内容更新：新增角色「钝斯提李」（B+，双效果轮流 + 单维度变化被动）",
+    "新增：神化论附魔系统（灵巧/华彩/奇迹）、反乌托邦待抵消队列、乌托邦序曲主动响应区、世界树生机机制"
+  ]},
   { version: "v2.3.0", items: [
     "新增：全局状态玩法——房主可在大厅勾选「启用全局状态」，开局时随机抽取一种状态并整局生效",
     "新增：12种全局状态（大合作/大节制/至死不渝/复读/缄默症候群/藏锋/WJC/一觉醒来/2.0时代/存货积压/俄罗斯轮盘/唯有纯粹）",
@@ -374,6 +380,22 @@ const CHARACTERS = Object.freeze([
       description: "每回合可发动1次，你每拥有2点创新能力，获得1点具象表演水平和1点抽象表演水平。"
     }],
     passive: "你的具象表演水平的提升值翻倍。"
+  },
+  {
+    id: "dun-stili", name: "钝斯提李", rarity: "B+", glyph: "layers",
+    stats: { config: 6, abstract: 9, concrete: 5, innovation: 8, selection: 7, stamina: 8 },
+    lore: "全圈HDM谱面的领军人物之一……",
+    abilities: [
+      {
+        id: "dun-stili-rarity", cooldown: 1, choice: "rarity",
+        description: "选择一个稀有度（白/绿/蓝/紫/橙/彩），弃置手牌中所有该稀有度的技能牌。随机选择一项除选曲品味外的谱面维度，使其+X（X=实际弃牌数，最高5）。若弃置后手牌为空，则摸1张牌。"
+      },
+      {
+        id: "dun-stili-peak", cooldown: 1, choice: "own-peak-dimension",
+        description: "选择自己除选曲品味外数值最高的谱面维度（并列任选其一），使其-3，然后摸2张牌。"
+      }
+    ],
+    passive: "每当你的谱面维度数值发生有效变化（变化量≠0）且本次变化仅涉及1个维度时，你的抽象动效与创新能力各+1。"
   }
 ]);
 
@@ -509,8 +531,26 @@ const SKILL_CARDS = Object.freeze([
     description: "你的声望-5。接下来的三个轮次内，其他玩家无法对你使用任何负面技能；你的所有谱面维度将被锁定，直至下一轮次内你自己的回合结束。" },
   { id: "star-hit", name: "撞星", rarity: "blue", category: "growth", target: "self", glyph: "star",
     description: "打出此牌后，你位置右方的所有手牌替换成【星】。根据替换手牌的卡色：每含一张橙色，具象+8且再摸一张撞星；每含一张紫色或蓝色，具象+8；每含一张绿色或白色，配置+5。若你的谱师牌包含Ftayo/238/恼鬼/子阳，此牌所有加分效果额外+4。" },
-  { id: "limen", name: "里门", rarity: "green", category: "skill", target: "self", glyph: "door-open",
-    description: "抽象动效水平与具象动效水平均+6。下一回合你进入静默状态：不可发动角色技能，仅可打出一张手牌，使此手牌对其他玩家的减分效果×3。若你的谱师牌包含子阳，减分效果×3改为×6。" }
+  { id: "limen", name: "里门", rarity: "blue", category: "skill", target: "self", glyph: "door-open",
+    description: "抽象动效水平与具象动效水平均+6。下一回合你进入静默状态（若已被禁用则维持原状态）：不可发动角色技能，仅可主动打出一张手牌（强制打出不受限制）。该手牌对其他玩家造成的所有减分效果数值×3。若你的谱师牌包含子阳，则减分效果×6。" },
+  { id: "unsafe-zone", name: "不安全领域", rarity: "blue", category: "skill", target: "self", glyph: "shield-alert",
+    description: "抽象动效水平+3，配置水平+2。全场进入「不安全领域」，持续至当前玩家的下一个回合开始前。此期间任何玩家受到减分效果时，有50%概率随机弃置一张手牌（手牌为空则不触发）。每位玩家每回合限打出此牌一次。" },
+  { id: "deification", name: "神化论", rarity: "orange", category: "skill", target: "self", glyph: "sparkles",
+    description: "将手牌中所有技能牌附魔「灵巧」、所有成长牌附魔「华彩」、所有进攻牌附魔「奇迹」。本回合内最多主动打出3张牌（含此牌，强制打出不计）。灵巧：打出时自身随机一项维度+2。华彩：打出时重放一次，并使本回合内其他华彩牌失效。奇迹：打出时再摸1张牌。抽到此牌后必须优先打出（下个自己回合开始时自动触发）。" },
+  { id: "dystopia", name: "反乌托邦", rarity: "purple", category: "skill", target: "self", glyph: "shield-off",
+    description: "配置水平+8。持续一整轮：期间任意玩家维度被减少时记录到「待抵消队列」。期间你可随时弃置1张手牌抵消队列末尾一个未抵消的减分事件（减分不生效）。若本轮所有减分均被抵消，则下个回合开始时获得1张【乌托邦序曲】。" },
+  { id: "utopia-overture", name: "乌托邦序曲", rarity: "rainbow", category: "skill", target: "self", glyph: "music", special: true,
+    description: "抽象动效水平+3，获得永久【序曲】效果。序曲（每轮各限1次）：减分响应——抵消一次减分并使全场维度总和最高玩家随机维度-4；弃牌响应——抵消一次弃牌并使全场手牌最多玩家弃置2张。" },
+  { id: "world-tree", name: "世界树", rarity: "rainbow", category: "skill", target: "self", glyph: "tree-pine", special: true,
+    description: "牌堆中没有此牌。摸牌时若创新能力>15且爆肝程度>10，有15%概率摸到此牌（替换本次摸牌）。打出：每2点爆肝程度获得3点具象动效。从下一轮起每回合开始+1点生机（含Summercube额外+2），生机达3时爆肝程度+5并获得一张世界树。" },
+  { id: "you-suffer", name: "You Suffer", rarity: "orange", category: "attack", target: "opponent", glyph: "timer",
+    description: "选择一名其他玩家，其下一个回合总时长变为1秒，倒计时结束若未操作则自动结束回合。被打出时对方立即弹出提示。" },
+  { id: "seven-trace", name: "七迹", rarity: "blue", category: "skill", target: "self", glyph: "list",
+    description: "从牌堆抽取至多7张牌（稀有度互异且类别互异），按当前总分从高到低依次公开选牌，直到分配完毕。轮到你时可从窗口选1张加入手牌；超时15秒则自动随机分配。" },
+  { id: "arithmetic", name: "算数教室", rarity: "blue", category: "growth", target: "self", glyph: "calculator",
+    description: "弹出三道简易算术题（其中一道答案为9），5秒内选出正确答案。选对：具象动效永久+9。选错或超时：随机维度-9，下回合开始时重复出题直到选对。含SulfurDXD时改为中等难度、15秒，选对后六维各+9。" },
+  { id: "everything-unfinished", name: "一切未竟", rarity: "purple", category: "skill", target: "self", glyph: "history",
+    description: "回溯第1轮到上一轮所有玩家打出的技能牌，选择卡色最高的一张（彩>橙>紫>蓝>绿>白），将其效果再次发动（无需消耗手牌）。你的抽象动效水平+n（n=当前回合数-1，n≤8）。含钝斯提李时改为选择并打出两张牌。" }
 ]);
 
 const EVENT_CARDS = Object.freeze([

@@ -513,6 +513,18 @@
   }
   .global-modifier-banner strong { color: var(--yellow); }
   .global-modifier-banner span { color: #e5dcae; }
+  .overture-panel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface-2);
+  }
+  .overture-title { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; margin-right: auto; }
   .modal {
     position: fixed;
     inset: 0;

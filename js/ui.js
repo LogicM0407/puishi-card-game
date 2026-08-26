@@ -79,6 +79,28 @@ function render() {
       };
     }
   }
+  // 算数教室弹窗
+  if (!ui.modal && game?.arithmetic && !isSpectator()) {
+    const meIndex = game.players.findIndex(p => p.memberId === room.myId);
+    if (game.arithmetic.playerIndex === meIndex) {
+      const timeLimit = game.arithmetic.medium ? 15000 : 5000;
+      ui.modal = {
+        kind: "arithmetic",
+        title: "算数教室",
+        description: game.arithmetic.medium
+          ? "中等难度：15秒内选出答案正确的选项"
+          : "5秒内选出答案正确的选项",
+        questions: game.arithmetic.questions
+      };
+      clearTimeout(ui.arithmeticTimer);
+      ui.arithmeticTimer = setTimeout(() => {
+        if (ui.modal?.kind === "arithmetic") {
+          ui.modal = null;
+          sendGameAction("ANSWER_ARITHMETIC", { selectedIndex: -1 });
+        }
+      }, timeLimit);
+    }
+  }
   if (ui.screen === "entry" || !room.connected) renderEntry();
   else if (room.lifecycle === ROOM_STATE.WAITING) renderLobby();
   else if (room.lifecycle === ROOM_STATE.SETTLEMENT || game?.phase === GAME_PHASE.SETTLEMENT) renderSettlement();
@@ -466,6 +488,7 @@ function renderTurn(me) {
   return `
     <div class="phase-banner">${icon(mustUseCharacter ? "circle-alert" : "route", 19)}<div><strong>${instruction}</strong><span>${firstRound ? "首轮不摸牌 · 禁用技能牌" : `牌堆 ${game.deck.length} · 弃牌 ${game.discard.length} · 手牌上限 ${me?.handLimit ?? 5} · 本回合可出 ${game.turn.playableCards ?? 0} 张`}</span></div></div>
     ${renderPlayerStatuses(me, ownTurn)}
+    ${renderResponsePanel(me)}
     <section class="section">
       <div class="section-head"><h2>手牌</h2><span class="section-note">${me ? `${me.handCount} / ${me.handLimit ?? 5} 张` : "不可见"}</span></div>
       ${hand.length ? `<div class="card-row">${hand.map(card => renderSkillCard(card, me, ownTurn)).join("")}</div>` : '<div class="empty">暂无技能牌。事件牌摸到后会立即触发，不会进入这里。</div>'}
@@ -497,6 +520,29 @@ function renderTurn(me) {
       ${ownTurn && !firstRound && !game.turn.hasDrawn ? `<button class="btn primary" id="draw-card" ${(ui.pendingRequest || me.hand.length >= (me.handLimit ?? 5)) ? "disabled" : ""}>${icon("hand", 15)} ${me.hand.length >= (me.handLimit ?? 5) ? "手牌已满" : "摸1张牌"}</button>` : ""}
       ${ownTurn ? `<button class="btn coral" id="end-turn" ${(mustUseCharacter || (!firstRound && !game.turn.hasDrawn) || ui.pendingRequest) ? "disabled" : ""}>${icon("skip-forward", 15)} 结束回合</button>` : ""}
     </div>`;
+}
+
+function renderResponsePanel(me) {
+  if (!me) return "";
+  const managed = me && !me.isBot && me.aiControlled;
+  const meIndex = game.players.findIndex(p => p.memberId === me.memberId);
+  let html = "";
+  if (me.overtureActive) {
+    const reduceCan = !me.overtureReduceUsed && !ui.pendingRequest && !managed && game.lastReduction && game.lastReduction.turn === game.turn.number;
+    const discardCan = !me.overtureDiscardUsed && !ui.pendingRequest && !managed && game.lastDiscard && game.lastDiscard.turn === game.turn.number;
+    html += `<div class="overture-panel">
+      <div class="overture-title">${icon("music", 14)} 序曲响应（每轮各1次）</div>
+      <button class="btn ${reduceCan ? "coral" : ""}" id="overture-reduce" ${reduceCan ? "" : "disabled"}>减分响应 ${me.overtureReduceUsed ? "已用" : "1次"}</button>
+      <button class="btn ${discardCan ? "coral" : ""}" id="overture-discard" ${discardCan ? "" : "disabled"}>弃牌响应 ${me.overtureDiscardUsed ? "已用" : "1次"}</button>
+    </div>`;
+  }
+  if (game.dystopia && game.dystopia.ownerIndex === meIndex && !managed && !ui.pendingRequest) {
+    html += `<div class="overture-panel">
+      <div class="overture-title">${icon("shield-off", 14)} 反乌托邦（待抵消队列 ${game.dystopiaQueue.filter(q => !q.offset).length}）</div>
+      <button class="btn" id="dystopia-offset" ${me.hand.length ? "" : "disabled"}>弃1张牌抵消减分</button>
+    </div>`;
+  }
+  return html;
 }
 
 function renderPlayerStatuses(me, ownTurn) {
@@ -583,6 +629,15 @@ function bindTurn(me) {
   });
   document.getElementById("review-vote")?.addEventListener("click", openReviewAction);
   document.getElementById("restore-character-btn")?.addEventListener("click", openRestoreCharacterAction);
+  document.getElementById("overture-reduce")?.addEventListener("click", () => sendGameAction("OVERTURE_REDUCE"));
+  document.getElementById("overture-discard")?.addEventListener("click", () => sendGameAction("OVERTURE_DISCARD"));
+  document.getElementById("dystopia-offset")?.addEventListener("click", () => {
+    const me = myGamePlayer();
+    if (me?.hand?.length) {
+      // 简化：弃置最后一张手牌触发抵消
+      sendGameAction("DYSTOPIA_OFFSET", { cardUid: me.hand[me.hand.length - 1].uid });
+    }
+  });
 }
 
 function openRestoreCharacterAction() {
@@ -755,6 +810,29 @@ function openAbilityAction(characterId, abilityId) {
       cards,
       selectedUids: []
     };
+  } else if (ability.choice === "rarity") {
+    const me = myGamePlayer();
+    const rarities = Object.keys(SKILL_RARITY).filter(r => (me?.hand || []).some(c => c.type !== "star" && skillDefinition(c.cardId)?.rarity === r));
+    ui.modal = {
+      kind: "ability-rarity",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      rarities
+    };
+  } else if (ability.choice === "own-peak-dimension") {
+    const me = myGamePlayer();
+    const peakValue = Math.max(...CHANGEABLE_DIMENSIONS.map(d => me?.scores[d] ?? 0));
+    const dims = CHANGEABLE_DIMENSIONS.filter(d => (me?.scores[d] ?? 0) === peakValue);
+    ui.modal = {
+      kind: "ability-peak-dimension",
+      characterId,
+      abilityId,
+      title: definition.name,
+      description: ability.description,
+      dimensions: dims
+    };
   } else {
     return sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId });
   }
@@ -780,6 +858,8 @@ function renderActionModal() {
       <button class="btn primary" data-star-decision="accept">${icon("check", 15)} 弃星抵消</button>
       <button class="btn coral" data-star-decision="decline">${icon("x", 15)} 不抵消</button>
     </div>`;
+  } else if (modal.kind === "arithmetic") {
+    choices = `<div class="event-step"><div class="event-step-title">选择答案正确的选项（其中一道答案为9）</div><div class="target-list">${modal.questions.map((q, i) => `<button class="target-btn" data-arithmetic-answer="${i}"><span>${escapeHtml(q.text)} = ?</span><span class="target-score">选择</span></button>`).join("")}</div></div>`;
   } else if (modal.kind === "target-card" || modal.kind === "target-ability" || modal.kind === "skill-target-player") {
     choices = `<div class="target-list">${modal.targets.map(target => `<button class="target-btn" data-select-target="${target.memberId}"><span>${escapeHtml(target.name)}</span><span class="target-score">${totalScore(target)}分</span></button>`).join("")}</div>`;
   } else if (modal.kind === "motion-distribution") {
@@ -914,6 +994,12 @@ function renderActionModal() {
     }).join("");
     choices = `<div class="event-step"><div class="event-step-title">选择至多3张要弃置的技能牌</div><div class="target-list">${cardButtons}</div></div>
       <div class="modal-actions"><button class="btn primary" id="confirm-modal" ${modal.selectedUids.length ? "" : "disabled"}>确定</button></div>`;
+  } else if (modal.kind === "ability-rarity") {
+    const rarityButtons = modal.rarities.map(r => `<button class="target-btn" data-ability-rarity="${r}"><span>${SKILL_RARITY[r]?.label || r}稀有度</span><span class="target-score">弃置该稀有度牌</span></button>`).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择一个稀有度</div><div class="target-list">${rarityButtons || '<div class="empty">没有可弃置的稀有度牌</div>'}</div></div>`;
+  } else if (modal.kind === "ability-peak-dimension") {
+    const dimButtons = modal.dimensions.map(d => `<button class="target-btn" data-ability-peak-dim="${d}"><span>${DIMENSION_LABELS[d]}</span><span class="target-score">-3 并摸2张</span></button>`).join("");
+    choices = `<div class="event-step"><div class="event-step-title">选择要降低的最高维度</div><div class="target-list">${dimButtons}</div></div>`;
   } else if (modal.kind === "review-vote") {
     choices = `<div>${modal.targets.map(target => `<div class="vote-row"><span>${escapeHtml(target.name)}</span><button class="btn small" data-review-target="${target.memberId}" data-vote="green">绿票</button><button class="btn small coral" data-review-target="${target.memberId}" data-vote="red">红票</button></div>`).join("")}</div>`;
   } else if (modal.kind === "event-choose") {
@@ -1187,6 +1273,27 @@ function renderActionModal() {
         targetMemberId: button.dataset.reviewTarget,
         vote: button.dataset.vote
       });
+    };
+  });
+  document.querySelectorAll("[data-arithmetic-answer]").forEach(button => {
+    button.onclick = () => {
+      ui.modal = null;
+      clearTimeout(ui.arithmeticTimer);
+      sendGameAction("ANSWER_ARITHMETIC", { selectedIndex: Number(button.dataset.arithmeticAnswer) });
+    };
+  });
+  document.querySelectorAll("[data-ability-rarity]").forEach(button => {
+    button.onclick = () => {
+      const { characterId, abilityId } = modal;
+      ui.modal = null;
+      sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId, rarity: button.dataset.abilityRarity });
+    };
+  });
+  document.querySelectorAll("[data-ability-peak-dim]").forEach(button => {
+    button.onclick = () => {
+      const { characterId, abilityId } = modal;
+      ui.modal = null;
+      sendGameAction("ACTIVATE_CHARACTER", { characterId, abilityId, dimension: button.dataset.abilityPeakDim });
     };
   });
 }
